@@ -385,9 +385,11 @@ export class PostgresDriver implements Driver {
 		const extensionsMetadata = await this.checkMetadataForExtensions();
 		const [connection, release] = await this.obtainMasterConnection();
 
-		// Create schema if it doesn't exist (only runs once during initialization)
+		// Create schema if it doesn't exist (only runs once during initialization).
+		// PostgreSQL checks the CREATE privilege on the database before it applies IF NOT EXISTS.
+		// Check first, so that a role that owns the schema but cannot create schemas can connect.
 		const { schema } = this.options;
-		if (schema && schema !== 'public') {
+		if (schema && schema !== 'public' && !(await this.schemaExists(connection, schema))) {
 			await this.executeQuery(connection, `CREATE SCHEMA IF NOT EXISTS "${schema}"`);
 		}
 
@@ -1423,6 +1425,28 @@ export class PostgresDriver implements Driver {
 		return new Promise((ok, fail) => {
 			connection.query(query, (err: any, result: any) => (err ? fail(err) : ok(result)));
 		});
+	}
+
+	/**
+	 * Whether the current database has a schema with this name.
+	 */
+	protected async schemaExists(
+		connection: {
+			query(
+				query: string,
+				parameters: string[],
+				callback: (err: Error | null, result: { rows: unknown[] }) => void,
+			): void;
+		},
+		schema: string,
+	): Promise<boolean> {
+		const query = 'SELECT 1 FROM "pg_catalog"."pg_namespace" WHERE "nspname" = $1';
+		this.connection.logger.logQuery(query, [schema]);
+
+		const result = await new Promise<{ rows: unknown[] }>((ok, fail) => {
+			connection.query(query, [schema], (err, res) => (err ? fail(err) : ok(res)));
+		});
+		return result.rows.length > 0;
 	}
 
 	/**
