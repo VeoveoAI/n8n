@@ -83,6 +83,29 @@ This fork carries Veoveo changes on the `veoveo` branch over an upstream n8n rel
   connection after the probe. In a person's Computer, the Assistant lists and calls the
   person's Hub tools.
 
+### The environment alone sets Instance AI's environment-managed settings
+
+- `packages/cli/src/modules/instance-ai/instance-ai-settings.service.ts`: the admin
+  fields `MANAGED_ADMIN_FIELDS` (`mcpServers`, `sandboxImage`, `sandboxTimeout`), which
+  upstream sources from the environment only (`N8N_INSTANCE_AI_MCP_SERVERS` and the
+  sandbox's variables) and refuses in an update, are no longer in the persisted admin
+  settings: a save does not write them, and the row is parsed without them, so a row that
+  already holds them is ignored for those fields and the environment decides. The
+  settings-updated event no longer compares `mcpServers`, which cannot change while n8n
+  runs. No migration: an old row keeps its other fields.
+- Why: upstream made these fields environment-only (#33488) but kept persisting them
+  with every admin save and applying the persisted value over the environment's at
+  load. Any save, such as turning web search off, froze the Assistant's MCP servers at
+  that start's value. In a person's Computer `veoveo-n8n-computer` saves
+  `{"searchDisabled": true}` at each start and names the Assistant's MCP endpoint, whose
+  URL holds that start's token, in `N8N_INSTANCE_AI_MCP_SERVERS`: a Computer whose first
+  start persisted `mcpServers: ""` had no MCP server after that, and one that persisted
+  a URL would keep a stale token.
+- Check: `instance-ai-settings.service.test.ts`, "environment-managed admin fields": a
+  persisted row does not override the environment, a save from such a row writes none of
+  them, and the other fields still persist and apply; in a person's Computer, the
+  Assistant lists the person's Hub tools after a restart.
+
 ## Configuration, Not Changes
 
 - **Table ownership:** n8n's PostgreSQL client (`pg` 8.21.0) reads `PGOPTIONS`, so

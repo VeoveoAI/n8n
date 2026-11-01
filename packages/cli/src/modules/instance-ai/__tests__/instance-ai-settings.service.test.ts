@@ -93,6 +93,8 @@ describe('InstanceAiSettingsService', () => {
 			n8nSandboxServiceUrl: '',
 			n8nSandboxServiceApiKey: '',
 			mcpServers: '',
+			sandboxImage: '',
+			sandboxTimeout: 60,
 			browserMcp: false,
 			braveSearchApiKey: '',
 			searxngUrl: '',
@@ -1171,6 +1173,67 @@ describe('InstanceAiSettingsService', () => {
 				unavailableReason:
 					'N8N_SANDBOX_SERVICE_URL is required when Instance AI sandbox provider is n8n-sandbox.',
 			});
+		});
+	});
+
+	describe('environment-managed admin fields', () => {
+		const environmentMcpServers = 'veoveo=http://127.0.0.1:5680/n8n/mcp/start-token';
+
+		beforeEach(() => {
+			aiService.isProxyEnabled.mockReturnValue(false);
+			Object.assign(globalConfig.instanceAi, {
+				mcpServers: environmentMcpServers,
+				sandboxImage: 'environment-image',
+				sandboxTimeout: 120,
+			});
+		});
+
+		it('does not let a persisted row override the environment', async () => {
+			persistedSettingsValue = JSON.stringify({
+				mcpServers: '',
+				sandboxImage: 'persisted-image',
+				sandboxTimeout: 5,
+				mcpAccessEnabled: false,
+			});
+
+			await service.loadFromDb();
+
+			expect(globalConfig.instanceAi.mcpServers).toBe(environmentMcpServers);
+			expect(globalConfig.instanceAi.sandboxImage).toBe('environment-image');
+			expect(globalConfig.instanceAi.sandboxTimeout).toBe(120);
+			// The row's other fields still apply.
+			expect(service.isMcpAccessEnabled()).toBe(false);
+		});
+
+		it('does not write them when saving, even from a row that holds them', async () => {
+			persistedSettingsValue = JSON.stringify({
+				mcpServers: '',
+				sandboxImage: 'persisted-image',
+				sandboxTimeout: 5,
+			});
+
+			await service.updateAdminSettings({ searchDisabled: true });
+
+			const saved = JSON.parse(persistedSettingsValue ?? '{}') as Record<string, unknown>;
+			expect(saved).not.toHaveProperty('mcpServers');
+			expect(saved).not.toHaveProperty('sandboxImage');
+			expect(saved).not.toHaveProperty('sandboxTimeout');
+			expect(saved.searchDisabled).toBe(true);
+			expect(globalConfig.instanceAi.mcpServers).toBe(environmentMcpServers);
+		});
+
+		it('still persists and applies the other admin fields', async () => {
+			await service.updateAdminSettings({
+				mcpAccessEnabled: false,
+				permissions: { createWorkflow: 'always_allow' },
+			});
+
+			const reloaded = createService();
+			await reloaded.loadFromDb();
+
+			expect(reloaded.isMcpAccessEnabled()).toBe(false);
+			expect(reloaded.getPermissions().createWorkflow).toBe('always_allow');
+			expect(globalConfig.instanceAi.mcpServers).toBe(environmentMcpServers);
 		});
 	});
 

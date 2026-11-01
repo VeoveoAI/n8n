@@ -230,16 +230,16 @@ function validateInstanceAiCredential(
 // Persisted shapes (no secrets — those come from env/config only)
 // ---------------------------------------------------------------------------
 
-/** Admin settings stored in DB under ADMIN_SETTINGS_KEY. */
+/**
+ * Admin settings stored in DB under ADMIN_SETTINGS_KEY. The environment-managed fields
+ * (`MANAGED_ADMIN_FIELDS`) are not among them: the environment alone sets those.
+ */
 interface PersistedAdminSettings {
 	enabled?: boolean;
 	permissions?: Partial<InstanceAiPermissions>;
-	mcpServers?: string;
 	mcpAccessEnabled?: boolean;
 	sandboxEnabled?: boolean;
 	sandboxProvider?: string;
-	sandboxImage?: string;
-	sandboxTimeout?: number;
 	modelName?: string | null;
 	searchDisabled?: boolean;
 	n8nSandboxServiceUrl?: string | null;
@@ -1457,7 +1457,9 @@ export class InstanceAiSettingsService {
 	/**
 	 * Admin fields sourced from environment variables only. Direct self-hosted
 	 * deployments may update instance credential assignments, the model name,
-	 * and the sandbox provider (env value acts as the default).
+	 * and the sandbox provider (env value acts as the default). These fields are
+	 * neither persisted nor applied from a persisted row, so the environment always
+	 * decides them.
 	 */
 	private static readonly MANAGED_ADMIN_FIELDS: readonly string[] = [
 		'mcpServers',
@@ -1696,7 +1698,6 @@ export class InstanceAiSettingsService {
 		if (persisted.permissions) {
 			this.permissions = resolveInstanceAiPermissions(persisted.permissions);
 		}
-		if (persisted.mcpServers !== undefined) c.mcpServers = persisted.mcpServers;
 		if (persisted.mcpAccessEnabled !== undefined)
 			this.mcpAccessEnabled = persisted.mcpAccessEnabled;
 		if (persisted.sandboxEnabled !== undefined) c.sandboxEnabled = persisted.sandboxEnabled;
@@ -1707,8 +1708,6 @@ export class InstanceAiSettingsService {
 				? undefined
 				: normalizeSandboxProvider(persisted.sandboxProvider);
 		c.sandboxProvider = this.sandboxProviderOverride ?? this.environmentSandboxProvider;
-		if (persisted.sandboxImage !== undefined) c.sandboxImage = persisted.sandboxImage;
-		if (persisted.sandboxTimeout !== undefined) c.sandboxTimeout = persisted.sandboxTimeout;
 		if (persisted.modelName !== undefined) this.adminModelName = persisted.modelName;
 		if (persisted.searchDisabled !== undefined)
 			this.searchDisabled =
@@ -1733,12 +1732,9 @@ export class InstanceAiSettingsService {
 		return {
 			enabled: this.enabled,
 			permissions: this.permissions,
-			mcpServers: c.mcpServers,
 			mcpAccessEnabled: this.mcpAccessEnabled,
 			sandboxEnabled: c.sandboxEnabled,
 			...(this.sandboxProviderOverride ? { sandboxProvider: this.sandboxProviderOverride } : {}),
-			sandboxImage: c.sandboxImage,
-			sandboxTimeout: c.sandboxTimeout,
 			modelName: this.adminModelName,
 			searchDisabled: this.searchDisabled,
 			n8nSandboxServiceUrl: this.adminN8nSandboxServiceUrl,
@@ -1797,6 +1793,11 @@ export class InstanceAiSettingsService {
 		delete settings.daytonaCredentialId;
 		delete settings.n8nSandboxCredentialId;
 		delete settings.searchCredentialId;
+		// A row saved before these fields became environment-managed may still hold them;
+		// the environment decides them, so the row's values are ignored.
+		for (const field of InstanceAiSettingsService.MANAGED_ADMIN_FIELDS) {
+			delete (settings as Record<string, unknown>)[field];
+		}
 		return settings;
 	}
 
@@ -1812,7 +1813,6 @@ export class InstanceAiSettingsService {
 		try {
 			this.eventService.emit('instance-ai-settings-updated', {
 				mcpSettingsChanged:
-					current.mcpServers !== previous.mcpServers ||
 					current.mcpAccessEnabled !== previous.mcpAccessEnabled ||
 					current.permissions?.mcpRead !== previous.permissions?.mcpRead ||
 					current.permissions?.mcpWrite !== previous.permissions?.mcpWrite,
