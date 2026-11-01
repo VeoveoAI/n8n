@@ -2,6 +2,7 @@ import { createScopedWorkspace } from '@n8n/agents';
 import type { Workspace } from '@n8n/agents';
 import {
 	DAYTONA_WORKSPACE_ROOT,
+	getPromptWorkspaceRoot,
 	getWorkspaceRoot,
 	PORTABLE_WORKSPACE_ROOT,
 } from '@n8n/agents/sandbox';
@@ -53,6 +54,7 @@ import { InstanceAiErrorReporterService } from '../instance-ai-error-reporter.se
 import { InstanceAiModelService } from '../instance-ai-model.service';
 import { InstanceAiSettingsService } from '../instance-ai-settings.service';
 import { InstanceAiSkillsService, type InstanceAiSkillScope } from '../instance-ai-skills.service';
+import { buildThreadScopedSandboxUuid } from '../sandbox/instance-ai-sandbox.service';
 import {
 	InstanceAiAdapterService,
 	type InstanceAiFeatureFlags,
@@ -456,8 +458,13 @@ export class AssistantTurnEnvironmentFactory {
 			if (sandboxConfig.enabled) {
 				// The same text for every provider keeps the prompt independent of the provider.
 				// Older Daytona sandboxes link this root to the Daytona root, so the tools also
-				// accept paths under the Daytona root.
-				workspaceRoot = PORTABLE_WORKSPACE_ROOT;
+				// accept paths under the Daytona root. Where the sandbox service gives each
+				// sandbox its own home (N8N_SANDBOX_SERVICE_HOMES), the thread's sandbox id
+				// names it.
+				workspaceRoot =
+					sandboxConfig.provider === 'n8n-sandbox'
+						? getPromptWorkspaceRoot(sandboxConfig.provider, buildThreadScopedSandboxUuid(threadId))
+						: PORTABLE_WORKSPACE_ROOT;
 				fallbackWorkspaceRoot = DAYTONA_WORKSPACE_ROOT;
 
 				const scopeWorkspaceForAgent = async (

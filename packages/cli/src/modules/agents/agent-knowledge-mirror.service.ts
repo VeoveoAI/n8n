@@ -459,7 +459,7 @@ export class AgentKnowledgeMirrorService {
 			projectId,
 			agentId,
 		);
-		return { ...runtime, paths: getAgentKnowledgePaths(runtime.provider) };
+		return { ...runtime, paths: getAgentKnowledgePaths(runtime.provider, runtime.sandbox.id) };
 	}
 
 	private resolveSearchFiles(

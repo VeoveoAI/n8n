@@ -12,6 +12,7 @@ import {
 } from '@n8n/instance-ai';
 import { mock } from 'vitest-mock-extended';
 
+import { buildThreadScopedSandboxUuid } from '../../sandbox/instance-ai-sandbox.service';
 import { QuotaExhaustedStreamError } from '../assistant-credits';
 import { AssistantTurnEnvironmentFactory } from '../assistant-turn-environment.factory';
 import type { AssistantTurnRuntime } from '../assistant-turn-runtime';
@@ -218,6 +219,27 @@ describe('AssistantTurnEnvironmentFactory', () => {
 				expect(orchestrationContext.workspaceRoot).toBe('/home/user/workspace');
 			},
 		);
+
+		it("gives the prompt the thread's sandbox home under N8N_SANDBOX_SERVICE_HOMES", async () => {
+			vi.stubEnv('N8N_SANDBOX_SERVICE_HOMES', '/sandbox/n8n/.sandboxes');
+			try {
+				const { factory, fields } = createSetupFactory();
+				fields.settingsService.getSandboxStatus.mockReturnValue({
+					workflowBuilderAvailable: true,
+				});
+				const runtime = createRuntime();
+				runtime.sandbox.resolveConfig = vi.fn(
+					async () => ({ enabled: true, provider: 'n8n-sandbox' }) as unknown as SandboxConfig,
+				);
+
+				const { context } = await factory.create(params, runtime);
+
+				const root = `/sandbox/n8n/.sandboxes/${buildThreadScopedSandboxUuid(params.threadId)}/workspace`;
+				expect(context.workspaceRoot).toBe(root);
+			} finally {
+				vi.unstubAllEnvs();
+			}
+		});
 
 		it('uses the workflow task coordinator directly when the runtime does not sync tasks', async () => {
 			const { factory } = createSetupFactory();

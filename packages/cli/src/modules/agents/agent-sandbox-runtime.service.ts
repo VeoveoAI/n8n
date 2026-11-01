@@ -377,7 +377,7 @@ export class AgentSandboxRuntimeService {
 			sandbox,
 			startOptions.onFilesystemInit ? { onInit: startOptions.onFilesystemInit } : undefined,
 		);
-		const workspaceRoot = getPromptWorkspaceRoot(provider);
+		const workspaceRoot = getPromptWorkspaceRoot(provider, sandbox.id);
 		this.logger.debug('Acquired agent sandbox', {
 			projectId,
 			agentId,
