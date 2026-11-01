@@ -2,7 +2,7 @@ import { McpClient } from '../../sdk/mcp-client';
 import { McpConnection } from '../mcp/mcp-connection';
 import { executeTool } from '../tools/tool-adapter';
 
-const sseCtor = vi.fn();
+const clientCtor = vi.fn();
 const streamableHttpCtor = vi.fn();
 const stdioCtor = vi.fn();
 
@@ -24,50 +24,46 @@ class FakeClient {
 	close = clientClose;
 }
 
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-	Client: vi.fn(function () {
+vi.mock('@modelcontextprotocol/client', () => ({
+	Client: vi.fn(function (info: unknown, options: unknown) {
+		clientCtor(info, options);
 		return new FakeClient();
 	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
-	SSEClientTransport: vi.fn(function (url: URL, options: unknown) {
-		sseCtor(url, options);
-		return { type: 'sse', url, options };
-	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-	StdioClientTransport: vi.fn(function (options: unknown) {
-		stdioCtor(options);
-		return { type: 'stdio', options };
-	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', async (importOriginal) => ({
-	...(await importOriginal()),
 	StreamableHTTPClientTransport: vi.fn(function (url: URL, options: unknown) {
 		streamableHttpCtor(url, options);
 		return { type: 'streamableHttp', url, options };
 	}),
 }));
 
-vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
-	CallToolResultSchema: {},
+vi.mock('@modelcontextprotocol/client/stdio', () => ({
+	StdioClientTransport: vi.fn(function (options: unknown) {
+		stdioCtor(options);
+		return { type: 'stdio', options };
+	}),
 }));
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('McpConnection — custom fetch forwarding', () => {
+describe('McpConnection — protocol revision and transports', () => {
 	beforeEach(() => {
-		sseCtor.mockClear();
+		clientCtor.mockClear();
 		streamableHttpCtor.mockClear();
 		stdioCtor.mockClear();
 		clientConnect.mockReset().mockResolvedValue(undefined);
 		clientClose.mockReset().mockResolvedValue(undefined);
 		clientListTools.mockClear();
+	});
+
+	it('pins MCP 2026-07-28 with no fallback on every connection', async () => {
+		await new McpConnection({ name: 'http', url: 'https://example.test/mcp' }).connect();
+		await new McpConnection({ name: 'stdio', command: 'node', args: ['server.mjs'] }).connect();
+
+		expect(clientCtor).toHaveBeenCalledTimes(2);
+		for (const [, options] of clientCtor.mock.calls as Array<[unknown, unknown]>) {
+			expect(options).toMatchObject({ versionNegotiation: { mode: { pin: '2026-07-28' } } });
+		}
 	});
 
 	it('forwards `fetch` to StreamableHTTPClientTransport when provided', async () => {
@@ -90,87 +86,46 @@ describe('McpConnection — custom fetch forwarding', () => {
 		const conn = new McpConnection({ name: 'default', url: 'https://example.test/mcp' });
 		await conn.connect();
 		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
-		expect(sseCtor).not.toHaveBeenCalled();
 	});
 
-	it('retries a legacy SSE endpoint when Streamable HTTP is unsupported', async () => {
-		const { StreamableHTTPError } = await import(
-			'@modelcontextprotocol/sdk/client/streamableHttp.js'
-		);
-		clientConnect.mockRejectedValueOnce(new StreamableHTTPError(404, 'Not found'));
-		const conn = new McpConnection({ name: 'legacy', url: 'https://example.test/sse' });
-		await conn.connect();
+	it('does not retry another transport when Streamable HTTP fails', async () => {
+		clientConnect.mockRejectedValueOnce(new Error('Not found'));
+		const conn = new McpConnection({ name: 'old', url: 'https://example.test/sse' });
+		await expect(conn.connect()).rejects.toThrow('Not found');
 		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
-		expect(sseCtor).toHaveBeenCalledTimes(1);
-		expect(clientClose).toHaveBeenCalled();
+		expect(clientConnect).toHaveBeenCalledTimes(1);
 	});
 
-	it('shares the connection timeout with the SSE retry', async () => {
-		const { StreamableHTTPError } = await import(
-			'@modelcontextprotocol/sdk/client/streamableHttp.js'
+	it('refuses the SSE transport before connecting', async () => {
+		const conn = new McpConnection({
+			name: 's2',
+			url: 'https://example.test/sse',
+			transport: 'sse',
+		});
+
+		await expect(conn.connect()).rejects.toThrow(
+			'MCP server "s2": the SSE transport cannot carry MCP 2026-07-28; use Streamable HTTP',
 		);
+		expect(streamableHttpCtor).not.toHaveBeenCalled();
+		expect(clientConnect).not.toHaveBeenCalled();
+	});
+
+	it('times out a connection that does not complete', async () => {
 		vi.useFakeTimers();
 		try {
-			clientConnect
-				.mockImplementationOnce(async () => {
-					await new Promise((resolve) => setTimeout(resolve, 90));
-					throw new StreamableHTTPError(404, 'Not found');
-				})
-				.mockImplementationOnce(async () => await new Promise<void>(() => {}));
+			clientConnect.mockImplementationOnce(async () => await new Promise<void>(() => {}));
 			const conn = new McpConnection({
-				name: 'legacy',
-				url: 'https://example.test/sse',
+				name: 'slow',
+				url: 'https://example.test/mcp',
 				connectionTimeoutMs: 100,
 			});
 
-			const connecting = conn.connect();
-			await vi.advanceTimersByTimeAsync(90);
-			expect(sseCtor).toHaveBeenCalledTimes(1);
-			const timedOut = expect(connecting).rejects.toThrow('connection timed out after 100ms');
-			await vi.advanceTimersByTimeAsync(10);
+			const timedOut = expect(conn.connect()).rejects.toThrow('connection timed out after 100ms');
+			await vi.advanceTimersByTimeAsync(100);
 			await timedOut;
-			expect(clientConnect).toHaveBeenCalledTimes(2);
 		} finally {
 			vi.useRealTimers();
 		}
-	});
-
-	it('forwards `fetch` to SSEClientTransport and to its eventSourceInit when provided', async () => {
-		const customFetch = vi.fn();
-		const conn = new McpConnection({
-			name: 's2',
-			url: 'https://example.test/mcp',
-			transport: 'sse',
-			fetch: customFetch as unknown as typeof fetch,
-		});
-
-		await conn.connect();
-
-		expect(sseCtor).toHaveBeenCalledTimes(1);
-		const [, options] = sseCtor.mock.calls[0] as [
-			URL,
-			{ fetch?: typeof fetch; eventSourceInit?: { fetch?: typeof fetch } },
-		];
-		expect(options.fetch).toBe(customFetch);
-		expect(options.eventSourceInit?.fetch).toBe(customFetch);
-	});
-
-	it('omits `fetch` and `eventSourceInit` when no custom fetch is provided', async () => {
-		const conn = new McpConnection({
-			name: 's3',
-			url: 'https://example.test/mcp',
-			transport: 'sse',
-		});
-
-		await conn.connect();
-
-		expect(sseCtor).toHaveBeenCalledTimes(1);
-		const [, options] = sseCtor.mock.calls[0] as [
-			URL,
-			{ fetch?: typeof fetch; eventSourceInit?: { fetch?: typeof fetch } },
-		];
-		expect(options.fetch).toBeUndefined();
-		expect(options.eventSourceInit).toBeUndefined();
 	});
 });
 
@@ -373,6 +328,31 @@ describe('McpConnection - tool call settled callback', () => {
 		expect(onToolCallSettled).toHaveBeenCalledWith({ toolName: 'echo', success: false });
 	});
 
+	it("lifts the protocol's reserved _meta keys out of a tool's result", async () => {
+		const conn = new McpConnection({
+			name: 's1',
+			url: 'https://example.test/mcp',
+			transport: 'streamableHttp',
+		});
+		await conn.connect();
+		const serverInfo = { name: 'server', version: '1.0.0' };
+		clientCallTool
+			.mockResolvedValueOnce({
+				content: [{ type: 'text', text: 'ok' }],
+				_meta: { 'io.modelcontextprotocol/serverInfo': serverInfo, 'com.example/trace': 't1' },
+			})
+			.mockResolvedValueOnce({
+				content: [{ type: 'text', text: 'ok' }],
+				_meta: { 'io.modelcontextprotocol/serverInfo': serverInfo },
+			});
+
+		expect(await conn.callTool('echo', {})).toEqual({
+			content: [{ type: 'text', text: 'ok' }],
+			_meta: { 'com.example/trace': 't1' },
+		});
+		expect(await conn.callTool('echo', {})).toEqual({ content: [{ type: 'text', text: 'ok' }] });
+	});
+
 	it('passes resetTimeoutOnProgress: true to the SDK client so stalled calls die at the idle deadline', async () => {
 		const conn = new McpConnection({
 			name: 's1',
@@ -386,8 +366,8 @@ describe('McpConnection - tool call settled callback', () => {
 
 		expect(clientCallTool).toHaveBeenCalledTimes(1);
 		const callArgs = clientCallTool.mock.calls[0];
-		// callTool(request, resultSchema, options)
-		const options = callArgs[2] as { resetTimeoutOnProgress?: boolean };
+		// callTool(request, options)
+		const options = callArgs[1] as { resetTimeoutOnProgress?: boolean };
 		expect(options.resetTimeoutOnProgress).toBe(true);
 	});
 
@@ -403,7 +383,7 @@ describe('McpConnection - tool call settled callback', () => {
 		const controller = new AbortController();
 		await conn.callTool('echo', { message: 'ok' }, { abortSignal: controller.signal });
 
-		const options = clientCallTool.mock.calls[0][2] as {
+		const options = clientCallTool.mock.calls[0][1] as {
 			signal?: AbortSignal;
 			resetTimeoutOnProgress?: boolean;
 		};

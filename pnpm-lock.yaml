@@ -320,6 +320,9 @@ catalogs:
     '@lezer/lr':
       specifier: 1.4.5
       version: 1.4.5
+    '@modelcontextprotocol/client':
+      specifier: 2.4.0
+      version: 2.4.0
     '@modelcontextprotocol/ext-apps':
       specifier: 1.3.2
       version: 1.3.2
@@ -1246,9 +1249,9 @@ importers:
       '@daytona/sdk':
         specifier: 'catalog:'
         version: 0.205.1(bufferutil@4.0.9)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)(utf-8-validate@5.0.10)
-      '@modelcontextprotocol/sdk':
+      '@modelcontextprotocol/client':
         specifier: 'catalog:'
-        version: 1.31.0(supports-color@8.1.1)(zod@3.25.76)
+        version: 2.4.0
       '@n8n/ai-utilities':
         specifier: workspace:*
         version: link:../ai-utilities
@@ -1295,6 +1298,12 @@ importers:
         specifier: 'catalog:'
         version: 3.23.3(zod@3.25.76)
     devDependencies:
+      '@modelcontextprotocol/node':
+        specifier: 'catalog:'
+        version: 2.0.0(@modelcontextprotocol/server@2.3.0)(hono@4.13.11)
+      '@modelcontextprotocol/server':
+        specifier: 'catalog:'
+        version: 2.3.0
       '@n8n/oxlint-config':
         specifier: workspace:*
         version: link:../oxlint-config
@@ -11808,8 +11817,16 @@ packages:
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
+  '@modelcontextprotocol/client@2.4.0':
+    resolution: {integrity: sha512-LgrD2OphHuG12vfKFKz6SOnq7bKHQmhGJIAYdD+MZBn2npHEyry6uD8zvktodtl5CQM85MO0anUyD9JwmUmxww==}
+    engines: {node: '>=20'}
+
   '@modelcontextprotocol/core@2.3.0':
     resolution: {integrity: sha512-09BHFaNVBe5pB2AhzCfLj0cqmsKLERvZQ4FblzP90UMGLaXVqdZPByFjURwsUYCmxonUW2yAwgTTvle+8O2/8w==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/core@2.4.0':
+    resolution: {integrity: sha512-z8QBKqdfXLPzkLQuG4xp8hrVEMm1PZ1IgxMN2sMbJiFiAKOWXnAzogXn2W4aqIBlP1ea6U5yiqVquvUNM1Cj6Q==}
     engines: {node: '>=20'}
 
   '@modelcontextprotocol/ext-apps@1.3.2':
@@ -29178,7 +29195,21 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
+  '@modelcontextprotocol/client@2.4.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.4.0
+      cross-spawn: 7.0.6
+      eventsource: 3.0.6
+      eventsource-parser: 3.0.8
+      jose: 6.2.9
+      pkce-challenge: 5.0.0(patch_hash=651e785d0b7bbf5be9210e1e895c39a16dc3ce8a5a3843b4819565fb6e175b90)
+      zod: 3.25.76
+
   '@modelcontextprotocol/core@2.3.0':
+    dependencies:
+      zod: 3.25.76
+
+  '@modelcontextprotocol/core@2.4.0':
     dependencies:
       zod: 3.25.76
 

@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { startSseServer, type TestServer } from './mcp-server-helpers';
+import { startStreamableHttpServer, type TestServer } from './mcp-server-helpers';
 import { Agent, McpClient, Tool } from '../../index';
 
 describe('McpClient.listTools()', () => {
 	let server: TestServer;
 
 	beforeAll(async () => {
-		server = await startSseServer();
+		server = await startStreamableHttpServer();
 	});
 
 	afterAll(async () => {
@@ -44,7 +44,7 @@ describe('McpClient.listTools()', () => {
 	});
 
 	it('skips an unreachable server and records the failure', async () => {
-		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/sse' }]);
+		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/mcp' }]);
 
 		const tools = await client.listTools();
 		expect(tools).toEqual([]);
@@ -54,7 +54,7 @@ describe('McpClient.listTools()', () => {
 	it('keeps healthy server tools and records the failing server', async () => {
 		const client = new McpClient([
 			{ name: 'ok', url: server.url },
-			{ name: 'dead', url: 'http://127.0.0.1:1/sse' },
+			{ name: 'dead', url: 'http://127.0.0.1:1/mcp' },
 		]);
 
 		const tools = await client.listTools();
@@ -65,7 +65,7 @@ describe('McpClient.listTools()', () => {
 
 describe('Agent with MCP boundary errors', () => {
 	it('exposes MCP connection failures without aborting the agent build', async () => {
-		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/sse' }]);
+		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/mcp' }]);
 		const agent = new Agent('bad-mcp-agent')
 			.model('anthropic/claude-haiku-4-5')
 			.instructions('test')
@@ -81,7 +81,7 @@ describe('Agent with MCP boundary errors', () => {
 	});
 
 	it('merges externally-reported failures with McpClient-sourced failures in getMcpConnectionFailures()', async () => {
-		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/sse' }]);
+		const client = new McpClient([{ name: 'dead', url: 'http://127.0.0.1:1/mcp' }]);
 		const agent = new Agent('mcp-merge-agent')
 			.model('anthropic/claude-haiku-4-5')
 			.instructions('test')
@@ -101,7 +101,7 @@ describe('Agent with MCP boundary errors', () => {
 		let server: TestServer;
 
 		beforeAll(async () => {
-			server = await startSseServer();
+			server = await startStreamableHttpServer();
 		});
 
 		afterAll(async () => {

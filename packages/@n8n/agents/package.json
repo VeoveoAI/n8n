@@ -110,7 +110,7 @@
     "@ai-sdk/provider-utils": "catalog:",
     "@ai-sdk/xai": "catalog:",
     "@daytona/sdk": "catalog:",
-    "@modelcontextprotocol/sdk": "catalog:",
+    "@modelcontextprotocol/client": "catalog:",
     "@n8n/ai-utilities": "workspace:*",
     "@n8n/client-oauth2": "workspace:*",
     "@n8n/sandbox-client": "0.1.1",
@@ -161,6 +161,8 @@
     }
   },
   "devDependencies": {
+    "@modelcontextprotocol/node": "catalog:",
+    "@modelcontextprotocol/server": "catalog:",
     "@n8n/oxlint-config": "workspace:*",
     "@n8n/typescript-config": "workspace:*",
     "@n8n/vitest-config": "workspace:*",

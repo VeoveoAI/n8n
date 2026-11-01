@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/consistent-type-imports */
-/** Don't remove the .js extensions. That's how the @modelcontextprotocol/sdk is packaged. */
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { McpToolResolver } from './mcp-tool-resolver';
 import { wrapToolForApproval } from '../../sdk/tool';
@@ -16,52 +15,57 @@ import type { BuiltTool } from '../../types/sdk/tool';
 export type McpCallToolResult = CallToolResult;
 
 /**
- * Import the @modelcontextprotocol/sdk client subpaths. Every SDK type used in
- * this file is derived from this function's inferred return type. That keeps a
- * single source of truth for module resolution: under NodeNext these value-space
- * dynamic imports resolve to the SDK's ESM declarations, whereas static `import
- * type` / `typeof import(...)` in this CommonJS-context file would resolve to the
- * CJS declarations — and the two are nominally incompatible (the Client/transport
- * classes carry private members). Deriving from here sidesteps that mismatch.
+ * The one MCP protocol revision this client speaks. Every connection pins it: the
+ * server's `server/discover` must offer it, and a server that does not fails the
+ * connection. There is no 2025-era `initialize` handshake and no fallback.
+ */
+export const MCP_PROTOCOL_VERSION = '2026-07-28';
+
+/**
+ * The prefix of the `_meta` keys MCP 2026-07-28 reserves for its per-message envelope.
+ * A server stamps `io.modelcontextprotocol/serverInfo` on every result. Such keys describe
+ * the exchange, not the tool's output: the SDK lifts them out of requests and
+ * notifications, and {@link withoutProtocolEnvelope} lifts them out of a tool's result.
+ */
+const PROTOCOL_META_PREFIX = 'io.modelcontextprotocol/';
+
+/** `result` without the protocol's reserved `_meta` keys; other `_meta` keys stay. */
+function withoutProtocolEnvelope(result: McpCallToolResult): McpCallToolResult {
+	if (!result._meta) return result;
+	const { _meta: meta, ...rest } = result;
+	const kept = Object.entries(meta).filter(([key]) => !key.startsWith(PROTOCOL_META_PREFIX));
+	return kept.length > 0
+		? { ...rest, _meta: Object.fromEntries(kept) as McpCallToolResult['_meta'] }
+		: rest;
+}
+
+/**
+ * Import the @modelcontextprotocol/client entry points. Every SDK type used in this
+ * file is derived from this function's inferred return type, so module resolution
+ * has a single source of truth: value-space dynamic imports resolve to the SDK's ESM
+ * declarations under NodeNext, which static `import type` in this CommonJS-context
+ * file would not.
  */
 async function importMcpSdk() {
-	const [
-		{ Client },
-		// oxlint-disable-next-line typescript/no-deprecated -- Explicit SSE keeps older servers available.
-		{ SSEClientTransport },
-		{ StdioClientTransport },
-		{ StreamableHTTPClientTransport, StreamableHTTPError },
-		{ CallToolResultSchema },
-	] = await Promise.all([
-		import('@modelcontextprotocol/sdk/client/index.js'),
-		import('@modelcontextprotocol/sdk/client/sse.js'),
-		import('@modelcontextprotocol/sdk/client/stdio.js'),
-		import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
-		import('@modelcontextprotocol/sdk/types.js'),
+	const [{ Client, StreamableHTTPClientTransport }, { StdioClientTransport }] = await Promise.all([
+		import('@modelcontextprotocol/client'),
+		import('@modelcontextprotocol/client/stdio'),
 	]);
-	return {
-		Client,
-		SSEClientTransport,
-		StdioClientTransport,
-		StreamableHTTPClientTransport,
-		StreamableHTTPError,
-		CallToolResultSchema,
-	};
+	return { Client, StreamableHTTPClientTransport, StdioClientTransport };
 }
 
 type McpSdkModule = Awaited<ReturnType<typeof importMcpSdk>>;
 type McpClient = InstanceType<McpSdkModule['Client']>;
 type McpTransport =
-	| InstanceType<McpSdkModule['SSEClientTransport']>
 	| InstanceType<McpSdkModule['StreamableHTTPClientTransport']>
 	| InstanceType<McpSdkModule['StdioClientTransport']>;
 
 let mcpSdkPromise: Promise<McpSdkModule> | undefined;
 
 /**
- * Load the @modelcontextprotocol/sdk client subpaths on first use. Deferred so
- * the agents module's startup cost stays low — the SDK loads ~12 MB of code
- * that is only needed once a user actually configures an MCP server.
+ * Load the @modelcontextprotocol/client entry points on first use. Deferred so the
+ * agents module's startup cost stays low: the SDK is only needed once a user
+ * actually configures an MCP server.
  */
 async function loadMcpSdk(): Promise<McpSdkModule> {
 	mcpSdkPromise ??= importMcpSdk();
@@ -124,38 +128,14 @@ export class McpConnection {
 
 	private async doConnect(): Promise<void> {
 		const sdk = await loadMcpSdk();
-		this.client = new sdk.Client({ name: '@n8n/agents', version: '0.1.0' }, { capabilities: {} });
-		await this.connectPreferredTransport(sdk);
+		this.client = new sdk.Client(
+			{ name: '@n8n/agents', version: '0.1.0' },
+			{ capabilities: {}, versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } } },
+		);
+		await this.connectWithTransport(this.createTransport(this.config, sdk));
 	}
 
-	private async connectPreferredTransport(sdk: McpSdkModule): Promise<void> {
-		const deadline =
-			this.config.connectionTimeoutMs === undefined
-				? undefined
-				: Date.now() + this.config.connectionTimeoutMs;
-		try {
-			await this.connectWithTransport(this.createTransport(this.config, sdk), deadline);
-		} catch (error) {
-			// An unconfigured HTTP endpoint may still serve legacy SSE. Retry only when
-			// it rejects Streamable HTTP; explicit transport choices never fall back.
-			if (
-				!this.config.url ||
-				this.config.transport !== undefined ||
-				!(error instanceof sdk.StreamableHTTPError) ||
-				(error.code !== 404 && error.code !== 405)
-			) {
-				throw error;
-			}
-			await this.client?.close();
-			this.client = new sdk.Client({ name: '@n8n/agents', version: '0.1.0' }, { capabilities: {} });
-			await this.connectWithTransport(
-				this.createSseTransport(new URL(this.config.url), this.config, sdk),
-				deadline,
-			);
-		}
-	}
-
-	private async connectWithTransport(transport: McpTransport, deadline?: number): Promise<void> {
+	private async connectWithTransport(transport: McpTransport): Promise<void> {
 		if (!this.client) throw new Error('MCP client not initialized; connect() must be called first');
 		const client = this.client;
 		const timeoutMs = this.config.connectionTimeoutMs;
@@ -168,14 +148,8 @@ export class McpConnection {
 				`MCP server "${this.config.name}": connectionTimeoutMs must be a positive finite number`,
 			);
 		}
-		const remainingMs = deadline === undefined ? timeoutMs : Math.max(0, deadline - Date.now());
 		let timeoutId: ReturnType<typeof setTimeout> | undefined;
 		try {
-			if (remainingMs === 0) {
-				throw new Error(
-					`MCP server "${this.config.name}": connection timed out after ${timeoutMs}ms`,
-				);
-			}
 			await Promise.race([
 				client.connect(transport),
 				new Promise<never>((_, reject) => {
@@ -185,7 +159,7 @@ export class McpConnection {
 								`MCP server "${this.config.name}": connection timed out after ${timeoutMs}ms`,
 							),
 						);
-					}, remainingMs);
+					}, timeoutMs);
 				}),
 			]);
 		} catch (error) {
@@ -244,15 +218,19 @@ export class McpConnection {
 		options?: { abortSignal?: AbortSignal; modelToolName?: string },
 	): Promise<McpCallToolResult> {
 		if (!this.client) throw new Error('MCP client not initialized; connect() must be called first');
-		const { CallToolResultSchema } = await loadMcpSdk();
 		try {
-			const result = (await this.client.callTool({ name, arguments: args }, CallToolResultSchema, {
-				...(options?.abortSignal ? { signal: options.abortSignal } : {}),
-				// Reset the SDK's 60s idle timeout on progress notifications so a
-				// long-running MCP call that streams progress stays alive, while
-				// a stalled call (no progress) dies at the idle deadline.
-				resetTimeoutOnProgress: true,
-			})) as McpCallToolResult;
+			const result = withoutProtocolEnvelope(
+				await this.client.callTool(
+					{ name, arguments: args },
+					{
+						...(options?.abortSignal ? { signal: options.abortSignal } : {}),
+						// Reset the SDK's idle timeout on progress notifications so a
+						// long-running MCP call that streams progress stays alive, while
+						// a stalled call (no progress) dies at the idle deadline.
+						resetTimeoutOnProgress: true,
+					},
+				),
+			);
 			await this.notifyToolCallSettled({
 				toolName: name,
 				...(options?.modelToolName !== undefined && { modelToolName: options.modelToolName }),
@@ -318,25 +296,20 @@ export class McpConnection {
 				env: config.env,
 			});
 		} else if (config.url) {
-			const url = new URL(config.url);
+			// The SSE transport predates the protocol revision every connection pins.
+			if (config.transport === 'sse') {
+				throw new Error(
+					`MCP server "${config.name}": the SSE transport cannot carry MCP ${MCP_PROTOCOL_VERSION}; use Streamable HTTP`,
+				);
+			}
 			const requestInit: RequestInit | undefined = config.headers
 				? { headers: config.headers }
 				: undefined;
-
-			if (config.transport === 'sse') return this.createSseTransport(url, config, sdk);
-			return new sdk.StreamableHTTPClientTransport(url, {
+			return new sdk.StreamableHTTPClientTransport(new URL(config.url), {
 				requestInit,
 				fetch: config.fetch,
 			});
 		}
 		throw new Error(`MCP server "${config.name}": provide either "url" or "command"`);
-	}
-
-	private createSseTransport(url: URL, config: McpServerConfig, sdk: McpSdkModule): McpTransport {
-		return new sdk.SSEClientTransport(url, {
-			requestInit: config.headers ? { headers: config.headers } : undefined,
-			fetch: config.fetch,
-			eventSourceInit: config.fetch ? { fetch: config.fetch } : undefined,
-		});
 	}
 }
