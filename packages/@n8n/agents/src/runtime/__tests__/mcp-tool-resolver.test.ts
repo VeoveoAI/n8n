@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import { McpConnection, type McpCallToolResult } from '../mcp/mcp-connection';

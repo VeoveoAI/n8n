@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/client';
 import type { JSONSchema7 } from 'json-schema';
 import { createHash } from 'node:crypto';
 

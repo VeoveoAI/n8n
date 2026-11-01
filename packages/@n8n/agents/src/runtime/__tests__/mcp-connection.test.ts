@@ -2,6 +2,7 @@ import { McpClient } from '../../sdk/mcp-client';
 import { McpConnection } from '../mcp/mcp-connection';
 import { executeTool } from '../tools/tool-adapter';
 
+const clientCtor = vi.fn();
 const sseCtor = vi.fn();
 const streamableHttpCtor = vi.fn();
 const stdioCtor = vi.fn();
@@ -24,37 +25,43 @@ class FakeClient {
 	close = clientClose;
 }
 
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-	Client: vi.fn(function () {
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+	...(await importOriginal()),
+	Client: vi.fn(function (info: unknown, options: unknown) {
+		clientCtor(info, options);
 		return new FakeClient();
 	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
 	SSEClientTransport: vi.fn(function (url: URL, options: unknown) {
 		sseCtor(url, options);
 		return { type: 'sse', url, options };
 	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-	StdioClientTransport: vi.fn(function (options: unknown) {
-		stdioCtor(options);
-		return { type: 'stdio', options };
-	}),
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', async (importOriginal) => ({
-	...(await importOriginal()),
 	StreamableHTTPClientTransport: vi.fn(function (url: URL, options: unknown) {
 		streamableHttpCtor(url, options);
 		return { type: 'streamableHttp', url, options };
 	}),
 }));
 
-vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
-	CallToolResultSchema: {},
+vi.mock('@modelcontextprotocol/client/stdio', () => ({
+	StdioClientTransport: vi.fn(function (options: unknown) {
+		stdioCtor(options);
+		return { type: 'stdio', options };
+	}),
 }));
+
+/** The error the Streamable HTTP transport raises when the server answers `status`. */
+async function httpError(status: number) {
+	const { SdkErrorCode, SdkHttpError } = await import('@modelcontextprotocol/client');
+	return new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, 'Error POSTing to endpoint', {
+		status,
+	});
+}
+
+/** The `versionNegotiation` each client was created with, in order. */
+function negotiations() {
+	return (clientCtor.mock.calls as Array<[unknown, { versionNegotiation?: unknown }]>).map(
+		([, options]) => options.versionNegotiation,
+	);
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -62,6 +69,7 @@ vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
 
 describe('McpConnection — custom fetch forwarding', () => {
 	beforeEach(() => {
+		clientCtor.mockClear();
 		sseCtor.mockClear();
 		streamableHttpCtor.mockClear();
 		stdioCtor.mockClear();
@@ -93,28 +101,46 @@ describe('McpConnection — custom fetch forwarding', () => {
 		expect(sseCtor).not.toHaveBeenCalled();
 	});
 
+	it('offers MCP 2026-07-28 first over Streamable HTTP and stdio, with the 2025 handshake as fallback', async () => {
+		await new McpConnection({ name: 'http', url: 'https://example.test/mcp' }).connect();
+		await new McpConnection({ name: 'stdio', command: 'node', args: ['server.mjs'] }).connect();
+		expect(negotiations()).toEqual([{ mode: 'auto' }, { mode: 'auto' }]);
+	});
+
+	it('uses the 2025 handshake alone over SSE', async () => {
+		await new McpConnection({
+			name: 'sse',
+			url: 'https://example.test/sse',
+			transport: 'sse',
+		}).connect();
+		expect(negotiations()).toEqual([undefined]);
+	});
+
 	it('retries a legacy SSE endpoint when Streamable HTTP is unsupported', async () => {
-		const { StreamableHTTPError } = await import(
-			'@modelcontextprotocol/sdk/client/streamableHttp.js'
-		);
-		clientConnect.mockRejectedValueOnce(new StreamableHTTPError(404, 'Not found'));
+		clientConnect.mockRejectedValueOnce(await httpError(404));
 		const conn = new McpConnection({ name: 'legacy', url: 'https://example.test/sse' });
 		await conn.connect();
 		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
 		expect(sseCtor).toHaveBeenCalledTimes(1);
 		expect(clientClose).toHaveBeenCalled();
+		expect(negotiations()).toEqual([{ mode: 'auto' }, undefined]);
+	});
+
+	it('does not retry over SSE when the server refuses authorization', async () => {
+		clientConnect.mockRejectedValueOnce(await httpError(401));
+		const conn = new McpConnection({ name: 'private', url: 'https://example.test/mcp' });
+		await expect(conn.connect()).rejects.toThrow('Error POSTing to endpoint');
+		expect(sseCtor).not.toHaveBeenCalled();
 	});
 
 	it('shares the connection timeout with the SSE retry', async () => {
-		const { StreamableHTTPError } = await import(
-			'@modelcontextprotocol/sdk/client/streamableHttp.js'
-		);
+		const notFound = await httpError(404);
 		vi.useFakeTimers();
 		try {
 			clientConnect
 				.mockImplementationOnce(async () => {
 					await new Promise((resolve) => setTimeout(resolve, 90));
-					throw new StreamableHTTPError(404, 'Not found');
+					throw notFound;
 				})
 				.mockImplementationOnce(async () => await new Promise<void>(() => {}));
 			const conn = new McpConnection({
@@ -373,6 +399,31 @@ describe('McpConnection - tool call settled callback', () => {
 		expect(onToolCallSettled).toHaveBeenCalledWith({ toolName: 'echo', success: false });
 	});
 
+	it("lifts the protocol's reserved _meta keys out of a tool's result", async () => {
+		const conn = new McpConnection({
+			name: 's1',
+			url: 'https://example.test/mcp',
+			transport: 'streamableHttp',
+		});
+		await conn.connect();
+		const serverInfo = { name: 'server', version: '1.0.0' };
+		clientCallTool
+			.mockResolvedValueOnce({
+				content: [{ type: 'text', text: 'ok' }],
+				_meta: { 'io.modelcontextprotocol/serverInfo': serverInfo, 'com.example/trace': 't1' },
+			})
+			.mockResolvedValueOnce({
+				content: [{ type: 'text', text: 'ok' }],
+				_meta: { 'io.modelcontextprotocol/serverInfo': serverInfo },
+			});
+
+		expect(await conn.callTool('echo', {})).toEqual({
+			content: [{ type: 'text', text: 'ok' }],
+			_meta: { 'com.example/trace': 't1' },
+		});
+		expect(await conn.callTool('echo', {})).toEqual({ content: [{ type: 'text', text: 'ok' }] });
+	});
+
 	it('passes resetTimeoutOnProgress: true to the SDK client so stalled calls die at the idle deadline', async () => {
 		const conn = new McpConnection({
 			name: 's1',
@@ -386,8 +437,8 @@ describe('McpConnection - tool call settled callback', () => {
 
 		expect(clientCallTool).toHaveBeenCalledTimes(1);
 		const callArgs = clientCallTool.mock.calls[0];
-		// callTool(request, resultSchema, options)
-		const options = callArgs[2] as { resetTimeoutOnProgress?: boolean };
+		// callTool(request, options)
+		const options = callArgs[1] as { resetTimeoutOnProgress?: boolean };
 		expect(options.resetTimeoutOnProgress).toBe(true);
 	});
 
@@ -403,7 +454,7 @@ describe('McpConnection - tool call settled callback', () => {
 		const controller = new AbortController();
 		await conn.callTool('echo', { message: 'ok' }, { abortSignal: controller.signal });
 
-		const options = clientCallTool.mock.calls[0][2] as {
+		const options = clientCallTool.mock.calls[0][1] as {
 			signal?: AbortSignal;
 			resetTimeoutOnProgress?: boolean;
 		};
