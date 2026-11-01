@@ -3,6 +3,7 @@ import { McpConnection } from '../mcp/mcp-connection';
 import { executeTool } from '../tools/tool-adapter';
 
 const clientCtor = vi.fn();
+const sseCtor = vi.fn();
 const streamableHttpCtor = vi.fn();
 const stdioCtor = vi.fn();
 
@@ -24,10 +25,15 @@ class FakeClient {
 	close = clientClose;
 }
 
-vi.mock('@modelcontextprotocol/client', () => ({
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+	...(await importOriginal()),
 	Client: vi.fn(function (info: unknown, options: unknown) {
 		clientCtor(info, options);
 		return new FakeClient();
+	}),
+	SSEClientTransport: vi.fn(function (url: URL, options: unknown) {
+		sseCtor(url, options);
+		return { type: 'sse', url, options };
 	}),
 	StreamableHTTPClientTransport: vi.fn(function (url: URL, options: unknown) {
 		streamableHttpCtor(url, options);
@@ -42,28 +48,34 @@ vi.mock('@modelcontextprotocol/client/stdio', () => ({
 	}),
 }));
 
+/** The error the Streamable HTTP transport raises when the server answers `status`. */
+async function httpError(status: number) {
+	const { SdkErrorCode, SdkHttpError } = await import('@modelcontextprotocol/client');
+	return new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, 'Error POSTing to endpoint', {
+		status,
+	});
+}
+
+/** The `versionNegotiation` each client was created with, in order. */
+function negotiations() {
+	return (clientCtor.mock.calls as Array<[unknown, { versionNegotiation?: unknown }]>).map(
+		([, options]) => options.versionNegotiation,
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('McpConnection — protocol revision and transports', () => {
+describe('McpConnection — custom fetch forwarding', () => {
 	beforeEach(() => {
 		clientCtor.mockClear();
+		sseCtor.mockClear();
 		streamableHttpCtor.mockClear();
 		stdioCtor.mockClear();
 		clientConnect.mockReset().mockResolvedValue(undefined);
 		clientClose.mockReset().mockResolvedValue(undefined);
 		clientListTools.mockClear();
-	});
-
-	it('pins MCP 2026-07-28 with no fallback on every connection', async () => {
-		await new McpConnection({ name: 'http', url: 'https://example.test/mcp' }).connect();
-		await new McpConnection({ name: 'stdio', command: 'node', args: ['server.mjs'] }).connect();
-
-		expect(clientCtor).toHaveBeenCalledTimes(2);
-		for (const [, options] of clientCtor.mock.calls as Array<[unknown, unknown]>) {
-			expect(options).toMatchObject({ versionNegotiation: { mode: { pin: '2026-07-28' } } });
-		}
 	});
 
 	it('forwards `fetch` to StreamableHTTPClientTransport when provided', async () => {
@@ -86,46 +98,105 @@ describe('McpConnection — protocol revision and transports', () => {
 		const conn = new McpConnection({ name: 'default', url: 'https://example.test/mcp' });
 		await conn.connect();
 		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
+		expect(sseCtor).not.toHaveBeenCalled();
 	});
 
-	it('does not retry another transport when Streamable HTTP fails', async () => {
-		clientConnect.mockRejectedValueOnce(new Error('Not found'));
-		const conn = new McpConnection({ name: 'old', url: 'https://example.test/sse' });
-		await expect(conn.connect()).rejects.toThrow('Not found');
-		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
-		expect(clientConnect).toHaveBeenCalledTimes(1);
+	it('offers MCP 2026-07-28 first over Streamable HTTP and stdio, with the 2025 handshake as fallback', async () => {
+		await new McpConnection({ name: 'http', url: 'https://example.test/mcp' }).connect();
+		await new McpConnection({ name: 'stdio', command: 'node', args: ['server.mjs'] }).connect();
+		expect(negotiations()).toEqual([{ mode: 'auto' }, { mode: 'auto' }]);
 	});
 
-	it('refuses the SSE transport before connecting', async () => {
-		const conn = new McpConnection({
-			name: 's2',
+	it('uses the 2025 handshake alone over SSE', async () => {
+		await new McpConnection({
+			name: 'sse',
 			url: 'https://example.test/sse',
 			transport: 'sse',
-		});
-
-		await expect(conn.connect()).rejects.toThrow(
-			'MCP server "s2": the SSE transport cannot carry MCP 2026-07-28; use Streamable HTTP',
-		);
-		expect(streamableHttpCtor).not.toHaveBeenCalled();
-		expect(clientConnect).not.toHaveBeenCalled();
+		}).connect();
+		expect(negotiations()).toEqual([undefined]);
 	});
 
-	it('times out a connection that does not complete', async () => {
+	it('retries a legacy SSE endpoint when Streamable HTTP is unsupported', async () => {
+		clientConnect.mockRejectedValueOnce(await httpError(404));
+		const conn = new McpConnection({ name: 'legacy', url: 'https://example.test/sse' });
+		await conn.connect();
+		expect(streamableHttpCtor).toHaveBeenCalledTimes(1);
+		expect(sseCtor).toHaveBeenCalledTimes(1);
+		expect(clientClose).toHaveBeenCalled();
+		expect(negotiations()).toEqual([{ mode: 'auto' }, undefined]);
+	});
+
+	it('does not retry over SSE when the server refuses authorization', async () => {
+		clientConnect.mockRejectedValueOnce(await httpError(401));
+		const conn = new McpConnection({ name: 'private', url: 'https://example.test/mcp' });
+		await expect(conn.connect()).rejects.toThrow('Error POSTing to endpoint');
+		expect(sseCtor).not.toHaveBeenCalled();
+	});
+
+	it('shares the connection timeout with the SSE retry', async () => {
+		const notFound = await httpError(404);
 		vi.useFakeTimers();
 		try {
-			clientConnect.mockImplementationOnce(async () => await new Promise<void>(() => {}));
+			clientConnect
+				.mockImplementationOnce(async () => {
+					await new Promise((resolve) => setTimeout(resolve, 90));
+					throw notFound;
+				})
+				.mockImplementationOnce(async () => await new Promise<void>(() => {}));
 			const conn = new McpConnection({
-				name: 'slow',
-				url: 'https://example.test/mcp',
+				name: 'legacy',
+				url: 'https://example.test/sse',
 				connectionTimeoutMs: 100,
 			});
 
-			const timedOut = expect(conn.connect()).rejects.toThrow('connection timed out after 100ms');
-			await vi.advanceTimersByTimeAsync(100);
+			const connecting = conn.connect();
+			await vi.advanceTimersByTimeAsync(90);
+			expect(sseCtor).toHaveBeenCalledTimes(1);
+			const timedOut = expect(connecting).rejects.toThrow('connection timed out after 100ms');
+			await vi.advanceTimersByTimeAsync(10);
 			await timedOut;
+			expect(clientConnect).toHaveBeenCalledTimes(2);
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('forwards `fetch` to SSEClientTransport and to its eventSourceInit when provided', async () => {
+		const customFetch = vi.fn();
+		const conn = new McpConnection({
+			name: 's2',
+			url: 'https://example.test/mcp',
+			transport: 'sse',
+			fetch: customFetch as unknown as typeof fetch,
+		});
+
+		await conn.connect();
+
+		expect(sseCtor).toHaveBeenCalledTimes(1);
+		const [, options] = sseCtor.mock.calls[0] as [
+			URL,
+			{ fetch?: typeof fetch; eventSourceInit?: { fetch?: typeof fetch } },
+		];
+		expect(options.fetch).toBe(customFetch);
+		expect(options.eventSourceInit?.fetch).toBe(customFetch);
+	});
+
+	it('omits `fetch` and `eventSourceInit` when no custom fetch is provided', async () => {
+		const conn = new McpConnection({
+			name: 's3',
+			url: 'https://example.test/mcp',
+			transport: 'sse',
+		});
+
+		await conn.connect();
+
+		expect(sseCtor).toHaveBeenCalledTimes(1);
+		const [, options] = sseCtor.mock.calls[0] as [
+			URL,
+			{ fetch?: typeof fetch; eventSourceInit?: { fetch?: typeof fetch } },
+		];
+		expect(options.fetch).toBeUndefined();
+		expect(options.eventSourceInit).toBeUndefined();
 	});
 });
 

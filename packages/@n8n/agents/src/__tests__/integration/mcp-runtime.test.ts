@@ -12,7 +12,7 @@ import {
 	collectStreamChunks,
 	chunksOfType,
 } from './helpers';
-import { startStreamableHttpServer, type TestServer } from './mcp-server-helpers';
+import { startSseServer, type TestServer } from './mcp-server-helpers';
 import { Agent, McpClient, Tool } from '../../index';
 
 // ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ describe_llm('agent generate() with MCP tool', () => {
 	let server: TestServer;
 
 	beforeAll(async () => {
-		server = await startStreamableHttpServer();
+		server = await startSseServer();
 	});
 
 	afterAll(async () => {
@@ -106,7 +106,7 @@ describe_llm('agent stream() with MCP tool', () => {
 	let server: TestServer;
 
 	beforeAll(async () => {
-		server = await startStreamableHttpServer();
+		server = await startSseServer();
 	});
 
 	afterAll(async () => {
@@ -141,7 +141,7 @@ describe_llm('McpServerConfig.requireApproval with MCP tools', () => {
 	let server: TestServer;
 
 	beforeAll(async () => {
-		server = await startStreamableHttpServer();
+		server = await startSseServer();
 	});
 
 	afterAll(async () => {

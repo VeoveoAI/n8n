@@ -50,35 +50,38 @@ This fork carries Veoveo changes on the `veoveo` branch over an upstream n8n rel
   the variable set, the Assistant's prompt names the sandbox's own workspace and its
   commands run there.
 
-### MCP 2026-07-28 only in `@n8n/agents`' MCP client
+### MCP 2026-07-28 first in `@n8n/agents`' MCP client
 
 - `packages/@n8n/agents/src/runtime/mcp/mcp-connection.ts`: `McpConnection` uses
   `@modelcontextprotocol/client` 2.4.0 instead of `@modelcontextprotocol/sdk` 1.31.0.
-  Every connection pins MCP `2026-07-28`
-  (`versionNegotiation: { mode: { pin: '2026-07-28' } }`): the client discovers the
-  server with `server/discover`, and a server that does not offer that revision fails
-  the connection. There is no 2025-era `initialize` handshake and no fallback. Streamable
-  HTTP and stdio carry it; a server configured with `transport: 'sse'` is refused, and an
-  unconfigured URL is no longer retried over SSE. `callTool` takes the 2.x client's
-  result type without a result schema, and lifts the protocol's reserved `_meta` keys
+  Over Streamable HTTP and stdio it offers MCP `2026-07-28` first, through
+  `server/discover`, and falls back to the 2025 `initialize` handshake when the server
+  does not support it: the SDK's own `versionNegotiation: { mode: 'auto' }`. An
+  authorization refusal (401, 403), a network failure, a server error (5xx), an
+  unusable reply or an HTTP probe timeout fails the connection instead of falling back;
+  on stdio the probe runs on a short-lived sibling process the SDK spawns from the same
+  command, and a server that closes or stays silent there is taken as a 2025 server. The
+  SSE transport predates `2026-07-28`, so `transport: 'sse'` keeps the handshake alone,
+  and an unconfigured URL whose Streamable HTTP endpoint answers 404 or 405 is retried
+  over SSE, as upstream does. `callTool` takes the 2.x client's result type without a
+  result schema, and lifts the protocol's reserved `_meta` keys
   (`io.modelcontextprotocol/…`, such as the `serverInfo` a 2026-07-28 server stamps on
   every result) out of the result, as the SDK lifts them out of requests and
   notifications: they describe the exchange, not the tool's output, and stay out of the
-  model's context. The tests' servers (`mcp-server-helpers.ts`,
-  `fixtures/mcp-stdio-server.mjs`) use `@modelcontextprotocol/server` 2.3.0 with
-  `legacy: 'reject'`, and `mcp-protocol-version.test.ts` checks the pin, the failure
-  against a server without `2026-07-28`, and the SSE refusal.
-- Why: the Veoveo platform speaks MCP `2026-07-28` only. SDK 1.31.0 negotiates up to
-  `2025-11-25`, so Instance AI, the agents module and every other `McpClient` user
-  could not reach a Hub MCP endpoint at the platform's revision.
+  model's context.
+- Why: the Veoveo Hub serves MCP `2026-07-28` only, and SDK 1.31.0 negotiates at most
+  `2025-11-25`, so Instance AI and the agents module could not reach it. Other servers
+  keep upstream's behaviour: a 2025-era server is reached with the handshake as before.
 - Scope: this is the MCP client of Instance AI (`N8N_INSTANCE_AI_MCP_SERVERS` and the
   MCP registry) and of the agents module. The MCP nodes of `@n8n/n8n-nodes-langchain`
-  (`McpClientTool`, `McpClient`, `McpRegistryClientTool` and the Microsoft vendor nodes)
-  keep their own SDK 1.31.0 client.
-- Check: `@n8n/agents` `mcp-connection.test.ts` and the MCP integration tests
-  (`mcp-protocol-version`, `mcp-streamable-http-transport`, `mcp-stdio-transport`,
-  `mcp-connection`, `mcp-client-boundary`, `mcp-runtime`); in a person's Computer, the
-  Assistant lists and calls the person's Hub tools.
+  keep their own SDK 1.31.0 client; Veoveo excludes them.
+- Check: `@n8n/agents` `mcp-connection.test.ts` and the MCP integration tests, among
+  them `mcp-protocol-version.test.ts`: a server of `@modelcontextprotocol/server` 2.x
+  that refuses the 2025 protocol is reached at `2026-07-28` with no `initialize`; the
+  1.x servers of the other tests, which speak the 2025 protocol only, are reached after
+  the fallback, over Streamable HTTP, SSE and stdio; a 401 and a network failure end the
+  connection after the probe. In a person's Computer, the Assistant lists and calls the
+  person's Hub tools.
 
 ## Configuration, Not Changes
 

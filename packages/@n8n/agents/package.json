@@ -162,6 +162,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/node": "catalog:",
+    "@modelcontextprotocol/sdk": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
     "@n8n/oxlint-config": "workspace:*",
     "@n8n/typescript-config": "workspace:*",

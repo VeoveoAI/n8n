@@ -38,12 +38,9 @@ export interface McpServerConfig {
 	name: string;
 
 	// URL-based transports (exactly one of url or command must be provided)
-	/** Server endpoint URL for the Streamable HTTP transport. */
+	/** Server endpoint URL for SSE or Streamable HTTP transport. */
 	url?: string;
-	/**
-	 * Transport type for URL-based servers: Streamable HTTP. `'sse'` is refused, since the
-	 * SSE transport cannot carry MCP 2026-07-28, the one revision the client speaks.
-	 */
+	/** Transport type for URL-based servers. Defaults to Streamable HTTP. Legacy SSE is also supported. */
 	transport?: 'sse' | 'streamableHttp';
 
 	// Stdio transport
@@ -92,7 +89,8 @@ export interface McpServerConfig {
 	configureToolsNonInterrupting?: boolean;
 
 	/**
-	 * Custom fetch implementation used by the Streamable HTTP transport.
+	 * Custom fetch implementation used by URL-based transports (SSE,
+	 * StreamableHTTP).
 	 * Ignored for stdio transport. When omitted, the SDK transports fall back
 	 * to the global `fetch`.
 	 */

@@ -1,7 +1,7 @@
 /**
  * Unit-style tests for McpConnection.listTools() approval wrapping.
  *
- * These tests use a real in-process MCP Streamable HTTP server but do NOT require an LLM.
+ * These tests use a real in-process MCP SSE server but do NOT require an LLM.
  * They verify that the `requireApproval` field on McpServerConfig correctly
  * wraps the appropriate tools with a suspend/resume approval gate.
  *
@@ -9,7 +9,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { startStreamableHttpServer, type TestServer } from './mcp-server-helpers';
+import { startSseServer, type TestServer } from './mcp-server-helpers';
 import { McpConnection } from '../../runtime/mcp/mcp-connection';
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ describe('McpConnection.listTools() — requireApproval config', () => {
 	let connection: McpConnection | undefined;
 
 	beforeAll(async () => {
-		server = await startStreamableHttpServer();
+		server = await startSseServer();
 	});
 
 	afterAll(async () => {
@@ -208,7 +208,7 @@ describe('McpConnection.disconnect() — idempotency', () => {
 	let server: TestServer;
 
 	beforeAll(async () => {
-		server = await startStreamableHttpServer();
+		server = await startSseServer();
 	});
 
 	afterAll(async () => {
