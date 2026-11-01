@@ -1,12 +1,20 @@
 /**
  * In-process MCP test server helpers.
  * Creates real MCP servers (SSE and StreamableHTTP) bound to random localhost ports
- * for use in integration tests. No mocking of SDK internals.
+ * for use in integration tests. No mocking of SDK internals. The SSE and Streamable
+ * HTTP servers of `@modelcontextprotocol/sdk` 1.x speak the 2025 protocol only; the
+ * modern server of `@modelcontextprotocol/server` 2.x speaks MCP 2026-07-28 only.
  */
 
+import { toNodeHandler } from '@modelcontextprotocol/node';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import {
+	createMcpHandler,
+	fromJsonSchema,
+	McpServer as ModernMcpServer,
+} from '@modelcontextprotocol/server';
 import http from 'http';
 import { z } from 'zod';
 
@@ -116,6 +124,71 @@ export async function startStreamableHttpServer(): Promise<TestServer> {
 		} catch {
 			if (!res.headersSent) res.writeHead(500).end('Internal server error');
 		}
+	});
+
+	await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+	const { port } = httpServer.address() as { port: number };
+
+	return {
+		url: `http://127.0.0.1:${port}/mcp`,
+		close: async () => {
+			httpServer.closeAllConnections();
+			await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+		},
+	};
+}
+
+/** An MCP 2026-07-28 server with the echo tool, built per request by the modern handler. */
+function createModernTestMcpServer(): ModernMcpServer {
+	const server = new ModernMcpServer({ name: 'test-modern-mcp-server', version: '1.0.0' });
+	server.registerTool(
+		'echo',
+		{
+			description: 'Echo the message back as-is',
+			inputSchema: fromJsonSchema<{ message: string }>({
+				type: 'object',
+				properties: { message: { type: 'string', description: 'Message to echo' } },
+				required: ['message'],
+			}),
+		},
+		async ({ message }) => ({ content: [{ type: 'text', text: message }] }),
+	);
+	return server;
+}
+
+/**
+ * Start a Streamable HTTP MCP server that serves MCP 2026-07-28 only and refuses the 2025
+ * protocol. Returns the endpoint URL and a close function.
+ */
+export async function startModernStreamableHttpServer(): Promise<TestServer> {
+	const handler = toNodeHandler(
+		createMcpHandler(() => createModernTestMcpServer(), { legacy: 'reject' }),
+	);
+	const httpServer = http.createServer(async (req, res) => {
+		try {
+			await handler(req, res);
+		} catch {
+			if (!res.headersSent) res.writeHead(500).end('Internal server error');
+		}
+	});
+
+	await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+	const { port } = httpServer.address() as { port: number };
+
+	return {
+		url: `http://127.0.0.1:${port}/mcp`,
+		close: async () => {
+			httpServer.closeAllConnections();
+			await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+		},
+	};
+}
+
+/** Start an HTTP server that refuses every request with 401. */
+export async function startUnauthorizedServer(): Promise<TestServer> {
+	const httpServer = http.createServer((req, res) => {
+		req.resume();
+		req.on('end', () => res.writeHead(401, { 'www-authenticate': 'Bearer' }).end());
 	});
 
 	await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));

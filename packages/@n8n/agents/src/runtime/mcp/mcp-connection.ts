@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/consistent-type-imports */
-/** Don't remove the .js extensions. That's how the @modelcontextprotocol/sdk is packaged. */
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { McpToolResolver } from './mcp-tool-resolver';
 import { wrapToolForApproval } from '../../sdk/tool';
@@ -16,36 +15,52 @@ import type { BuiltTool } from '../../types/sdk/tool';
 export type McpCallToolResult = CallToolResult;
 
 /**
- * Import the @modelcontextprotocol/sdk client subpaths. Every SDK type used in
- * this file is derived from this function's inferred return type. That keeps a
- * single source of truth for module resolution: under NodeNext these value-space
- * dynamic imports resolve to the SDK's ESM declarations, whereas static `import
- * type` / `typeof import(...)` in this CommonJS-context file would resolve to the
- * CJS declarations — and the two are nominally incompatible (the Client/transport
+ * The prefix of the `_meta` keys MCP 2026-07-28 reserves for its per-message envelope.
+ * A server stamps `io.modelcontextprotocol/serverInfo` on every result. Such keys describe
+ * the exchange, not the tool's output: the SDK lifts them out of requests and
+ * notifications, and {@link withoutProtocolEnvelope} lifts them out of a tool's result.
+ */
+const PROTOCOL_META_PREFIX = 'io.modelcontextprotocol/';
+
+/** `result` without the protocol's reserved `_meta` keys; other `_meta` keys stay. */
+function withoutProtocolEnvelope(result: McpCallToolResult): McpCallToolResult {
+	if (!result._meta) return result;
+	const { _meta: meta, ...rest } = result;
+	const kept = Object.entries(meta).filter(([key]) => !key.startsWith(PROTOCOL_META_PREFIX));
+	return kept.length > 0
+		? { ...rest, _meta: Object.fromEntries(kept) as McpCallToolResult['_meta'] }
+		: rest;
+}
+
+/**
+ * Import the @modelcontextprotocol/client entry points. Every SDK type used in this
+ * file is derived from this function's inferred return type. That keeps a single
+ * source of truth for module resolution: under NodeNext these value-space dynamic
+ * imports resolve to the SDK's ESM declarations, whereas static `import type` /
+ * `typeof import(...)` in this CommonJS-context file would resolve to the CJS
+ * declarations — and the two are nominally incompatible (the Client/transport
  * classes carry private members). Deriving from here sidesteps that mismatch.
  */
 async function importMcpSdk() {
 	const [
-		{ Client },
-		// oxlint-disable-next-line typescript/no-deprecated -- Explicit SSE keeps older servers available.
-		{ SSEClientTransport },
+		{
+			Client,
+			// oxlint-disable-next-line typescript/no-deprecated -- Explicit SSE keeps older servers available.
+			SSEClientTransport,
+			SdkHttpError,
+			StreamableHTTPClientTransport,
+		},
 		{ StdioClientTransport },
-		{ StreamableHTTPClientTransport, StreamableHTTPError },
-		{ CallToolResultSchema },
 	] = await Promise.all([
-		import('@modelcontextprotocol/sdk/client/index.js'),
-		import('@modelcontextprotocol/sdk/client/sse.js'),
-		import('@modelcontextprotocol/sdk/client/stdio.js'),
-		import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
-		import('@modelcontextprotocol/sdk/types.js'),
+		import('@modelcontextprotocol/client'),
+		import('@modelcontextprotocol/client/stdio'),
 	]);
 	return {
 		Client,
 		SSEClientTransport,
+		SdkHttpError,
 		StdioClientTransport,
 		StreamableHTTPClientTransport,
-		StreamableHTTPError,
-		CallToolResultSchema,
 	};
 }
 
@@ -59,9 +74,9 @@ type McpTransport =
 let mcpSdkPromise: Promise<McpSdkModule> | undefined;
 
 /**
- * Load the @modelcontextprotocol/sdk client subpaths on first use. Deferred so
- * the agents module's startup cost stays low — the SDK loads ~12 MB of code
- * that is only needed once a user actually configures an MCP server.
+ * Load the @modelcontextprotocol/client entry points on first use. Deferred so the
+ * agents module's startup cost stays low: the SDK is only needed once a user
+ * actually configures an MCP server.
  */
 async function loadMcpSdk(): Promise<McpSdkModule> {
 	mcpSdkPromise ??= importMcpSdk();
@@ -134,8 +149,22 @@ export class McpConnection {
 				initialHeaders: this.config.headers,
 			});
 		}
-		this.client = new sdk.Client({ name: '@n8n/agents', version: '0.1.0' }, { capabilities: {} });
+		this.client = this.createClient(sdk, !this.config.command && this.config.transport === 'sse');
 		await this.connectPreferredTransport(sdk);
+	}
+
+	/**
+	 * A client that offers MCP 2026-07-28 first, through `server/discover`, and falls
+	 * back to the 2025 `initialize` handshake when the server does not support it: the
+	 * SDK's `'auto'` negotiation. An authorization refusal, a network failure, a server
+	 * error or an HTTP probe timeout fails the connection instead of falling back. The
+	 * SSE transport predates 2026-07-28, so a client over SSE uses the handshake alone.
+	 */
+	private createClient(sdk: McpSdkModule, overSse: boolean): McpClient {
+		return new sdk.Client(
+			{ name: '@n8n/agents', version: '0.1.0' },
+			{ capabilities: {}, ...(overSse ? {} : { versionNegotiation: { mode: 'auto' as const } }) },
+		);
 	}
 
 	private async connectPreferredTransport(sdk: McpSdkModule): Promise<void> {
@@ -151,13 +180,13 @@ export class McpConnection {
 			if (
 				!this.config.url ||
 				this.config.transport !== undefined ||
-				!(error instanceof sdk.StreamableHTTPError) ||
-				(error.code !== 404 && error.code !== 405)
+				!(error instanceof sdk.SdkHttpError) ||
+				(error.status !== 404 && error.status !== 405)
 			) {
 				throw error;
 			}
 			await this.client?.close();
-			this.client = new sdk.Client({ name: '@n8n/agents', version: '0.1.0' }, { capabilities: {} });
+			this.client = this.createClient(sdk, true);
 			await this.connectWithTransport(
 				this.createSseTransport(new URL(this.config.url), sdk),
 				deadline,
@@ -254,15 +283,19 @@ export class McpConnection {
 		options?: { abortSignal?: AbortSignal; modelToolName?: string },
 	): Promise<McpCallToolResult> {
 		if (!this.client) throw new Error('MCP client not initialized; connect() must be called first');
-		const { CallToolResultSchema } = await loadMcpSdk();
 		try {
-			const result = (await this.client.callTool({ name, arguments: args }, CallToolResultSchema, {
-				...(options?.abortSignal ? { signal: options.abortSignal } : {}),
-				// Reset the SDK's 60s idle timeout on progress notifications so a
-				// long-running MCP call that streams progress stays alive, while
-				// a stalled call (no progress) dies at the idle deadline.
-				resetTimeoutOnProgress: true,
-			})) as McpCallToolResult;
+			const result = withoutProtocolEnvelope(
+				await this.client.callTool(
+					{ name, arguments: args },
+					{
+						...(options?.abortSignal ? { signal: options.abortSignal } : {}),
+						// Reset the SDK's 60s idle timeout on progress notifications so a
+						// long-running MCP call that streams progress stays alive, while
+						// a stalled call (no progress) dies at the idle deadline.
+						resetTimeoutOnProgress: true,
+					},
+				),
+			);
 			await this.notifyToolCallSettled({
 				toolName: name,
 				...(options?.modelToolName !== undefined && { modelToolName: options.modelToolName }),
