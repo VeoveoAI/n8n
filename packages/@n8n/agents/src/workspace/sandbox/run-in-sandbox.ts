@@ -15,6 +15,7 @@ export interface RunInSandboxOptions {
 
 export interface SandboxCommandTarget {
 	sandbox?: {
+		id?: string;
 		provider?: string;
 		executeCommand?: (
 			command: string,

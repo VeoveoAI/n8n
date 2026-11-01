@@ -11,8 +11,11 @@ export interface AgentKnowledgePaths {
 	stagingDir: string;
 }
 
-export function getAgentKnowledgePaths(provider: SandboxProvider): AgentKnowledgePaths {
-	const home = path.dirname(getPromptWorkspaceRoot(provider));
+export function getAgentKnowledgePaths(
+	provider: SandboxProvider,
+	sandboxId?: string,
+): AgentKnowledgePaths {
+	const home = path.dirname(getPromptWorkspaceRoot(provider, sandboxId));
 	const mirrorDir = `${home}/knowledge-mirror`;
 	return {
 		filesDir: `${mirrorDir}/files`,

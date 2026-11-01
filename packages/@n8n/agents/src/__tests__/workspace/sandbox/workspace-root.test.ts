@@ -15,6 +15,30 @@ describe('getPromptWorkspaceRoot', () => {
 	it('returns n8n-sandbox workspace root', () => {
 		expect(getPromptWorkspaceRoot('n8n-sandbox')).toBe('/home/user/workspace');
 	});
+
+	describe('when N8N_SANDBOX_SERVICE_HOMES gives each sandbox its own home', () => {
+		beforeEach(() => {
+			vi.stubEnv('N8N_SANDBOX_SERVICE_HOMES', '/sandbox/n8n/.sandboxes/');
+		});
+
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		it("returns the workspace in the sandbox's home", () => {
+			expect(getPromptWorkspaceRoot('n8n-sandbox', '44444444-4444-4444-8444-444444444444')).toBe(
+				'/sandbox/n8n/.sandboxes/44444444-4444-4444-8444-444444444444/workspace',
+			);
+		});
+
+		it('refuses a sandbox without an id', () => {
+			expect(() => getPromptWorkspaceRoot('n8n-sandbox')).toThrow('has no id');
+		});
+
+		it('leaves daytona as it is', () => {
+			expect(getPromptWorkspaceRoot('daytona', 'sb')).toBe('/home/daytona/workspace');
+		});
+	});
 });
 
 describe('getWorkspaceRoot', () => {
@@ -102,6 +126,27 @@ describe('getWorkspaceRoot', () => {
 		} as SandboxWorkspace;
 
 		await expect(getWorkspaceRoot(workspace)).resolves.toBe(`${N8N_SANDBOX_HOME}/${WORKSPACE_DIR}`);
+	});
+
+	it("uses the sandbox's own home when echo $HOME returns empty stdout under N8N_SANDBOX_SERVICE_HOMES", async () => {
+		vi.stubEnv('N8N_SANDBOX_SERVICE_HOMES', '/sandbox/n8n/.sandboxes');
+		const executeCommand = vi.fn().mockResolvedValue({
+			exitCode: 0,
+			stdout: '   \n',
+			stderr: '',
+		});
+		const workspace = {
+			sandbox: {
+				id: 'sb-1',
+				provider: 'n8n-sandbox',
+				executeCommand,
+			},
+		} as SandboxWorkspace;
+
+		await expect(getWorkspaceRoot(workspace)).resolves.toBe(
+			'/sandbox/n8n/.sandboxes/sb-1/workspace',
+		);
+		vi.unstubAllEnvs();
 	});
 
 	it('uses DAYTONA_HOME when echo $HOME returns empty stdout without provider metadata', async () => {

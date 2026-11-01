@@ -50,6 +50,7 @@ import { InstanceAiErrorReporterService } from '../instance-ai-error-reporter.se
 import { InstanceAiModelService } from '../instance-ai-model.service';
 import { InstanceAiSettingsService } from '../instance-ai-settings.service';
 import { InstanceAiSkillsService, type InstanceAiSkillScope } from '../instance-ai-skills.service';
+import { buildThreadScopedSandboxUuid } from '../sandbox/instance-ai-sandbox.service';
 import {
 	InstanceAiAdapterService,
 	type InstanceAiFeatureFlags,
@@ -468,7 +469,12 @@ export class AssistantTurnEnvironmentFactory {
 			);
 
 			if (sandboxConfig.enabled) {
-				workspaceRoot = getPromptWorkspaceRoot(sandboxConfig.provider);
+				// The thread's sandbox id names its home where the sandbox service gives each
+				// sandbox its own (N8N_SANDBOX_SERVICE_HOMES).
+				workspaceRoot = getPromptWorkspaceRoot(
+					sandboxConfig.provider,
+					buildThreadScopedSandboxUuid(threadId),
+				);
 
 				const scopeWorkspaceForAgent = async (
 					workspace: Workspace | undefined,

@@ -239,6 +239,27 @@ describe('getInstructions()', () => {
 		expect(instructions).toContain('Default working directory: /home/user/workspace');
 		expect(instructions).toContain('60s');
 	});
+
+	it("names the sandbox's own home under N8N_SANDBOX_SERVICE_HOMES", async () => {
+		vi.stubEnv('N8N_SANDBOX_SERVICE_HOMES', '/sandbox/n8n/.sandboxes');
+		try {
+			const sandbox = new N8nSandboxServiceSandbox(makeDefaultOptions());
+			await sandbox.start();
+
+			expect(sandbox.getInstructions()).toContain(
+				'Default working directory: /sandbox/n8n/.sandboxes/sb-123/workspace',
+			);
+			await expect(sandbox.getInfo()).resolves.toEqual(
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						workingDirectory: '/sandbox/n8n/.sandboxes/sb-123/workspace',
+					}),
+				}),
+			);
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
 });
 
 describe('executeCommand() env merging', () => {

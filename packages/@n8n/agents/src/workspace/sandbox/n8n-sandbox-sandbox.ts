@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { BaseSandbox } from './base-sandbox';
 import { toShellCommand } from './shell-command';
+import { getPromptWorkspaceRoot } from './workspace-root';
 import { raceWithAbort } from '../../sdk/abort';
 import type {
 	AbortableOptions,
@@ -44,10 +45,6 @@ export class N8nSandboxServiceSandbox extends BaseSandbox {
 
 	/** Deadline for the existence check after a 404, so a hung service fails fast. */
 	private static readonly PROBE_TIMEOUT_MS = 10_000;
-
-	private static readonly HOME_DIR = '/home/user';
-
-	private static readonly WORKSPACE_DIR = `${N8nSandboxServiceSandbox.HOME_DIR}/workspace`;
 
 	private sandboxId?: string;
 
@@ -102,7 +99,7 @@ export class N8nSandboxServiceSandbox extends BaseSandbox {
 			metadata: {
 				lastActiveAt: new Date(sandbox.lastActiveAt * 1000).toISOString(),
 				remoteStatus: sandbox.status,
-				workingDirectory: N8nSandboxServiceSandbox.WORKSPACE_DIR,
+				workingDirectory: getPromptWorkspaceRoot(this.provider, this.sandboxId),
 			},
 		};
 	}
@@ -110,7 +107,7 @@ export class N8nSandboxServiceSandbox extends BaseSandbox {
 	override getInstructions(): string {
 		return [
 			'Cloud sandbox with isolated execution (TypeScript runtime).',
-			`Default working directory: ${N8nSandboxServiceSandbox.WORKSPACE_DIR}.`,
+			`Default working directory: ${getPromptWorkspaceRoot(this.provider, this.sandboxId)}.`,
 			`Command timeout: ${Math.ceil(this.timeout / 1000)}s.`,
 		].join(' ');
 	}
