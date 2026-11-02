@@ -19,6 +19,7 @@ export type {
 	RuntimeSkillLinkedFiles,
 	RuntimeSkillLoader,
 	RuntimeSkillLoadError,
+	RuntimeSkillMcpOrigin,
 	RuntimeSkillMcpServerDependency,
 	RuntimeSkillLifetime,
 	RuntimeSkillPolicyContract,
@@ -40,6 +41,7 @@ export {
 	validateRuntimeSkill,
 } from './validator';
 export {
+	combineRuntimeSkillSources,
 	createRuntimeSkillRegistry,
 	createRuntimeSkillSource,
 	extendRuntimeSkillSource,
