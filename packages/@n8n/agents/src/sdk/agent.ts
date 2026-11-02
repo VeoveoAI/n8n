@@ -48,6 +48,7 @@ import {
 } from '../runtime/tools/delegate-sub-agent-tool';
 import { isSdkOwnedBuiltInTool } from '../runtime/tools/sdk-owned-tool';
 import { WRITE_TODOS_TOOL_NAME } from '../runtime/tools/write-todos-tool';
+import { gateCommandsForMcpSkills } from '../skills/tools';
 import {
 	appendSkillCatalogToInstructions,
 	createRuntimeSkillSource,
@@ -1046,7 +1047,11 @@ export class Agent implements BuiltAgent, AgentBuilder {
 
 		if (this.workspaceInstance) {
 			const wsTools = this.workspaceInstance.getTools();
-			finalTools.push(...wsTools);
+			finalTools.push(
+				...(this.skillSource
+					? gateCommandsForMcpSkills(wsTools, this.skillSource.registry)
+					: wsTools),
+			);
 		}
 
 		const finalStaticTools = finalTools;

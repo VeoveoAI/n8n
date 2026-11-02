@@ -370,6 +370,7 @@ describe('GlobalConfig', () => {
 			vertexLocation: '',
 			vertexServiceAccountJson: '',
 			mcpServers: '',
+			mcpApprovedSkills: '',
 			browserUseEnabled: true,
 			observerMessageTokens: 30_000,
 			memoryModel: '',

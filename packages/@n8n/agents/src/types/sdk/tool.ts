@@ -29,6 +29,8 @@ export interface ToolSuspendOptions {
 export interface ToolExecutionContext {
 	/** Load and retain instructions from this run's selected skill catalog. */
 	loadSkill?: RuntimeSkillLoader;
+	/** The ids of the skills active in this run, at the moment of the call. */
+	activeSkillIds?: () => readonly string[];
 	/** Agent run ID for the current execution. */
 	runId?: string;
 	/**
@@ -71,6 +73,7 @@ export interface ToolExecutionContext {
 
 export interface ToolContext {
 	loadSkill?: ToolExecutionContext['loadSkill'];
+	activeSkillIds?: ToolExecutionContext['activeSkillIds'];
 	/** AI SDK tool call ID for the current local tool execution. */
 	toolCallId?: string;
 	/** Exact model-facing name of the tool being executed. */
@@ -93,6 +96,7 @@ export interface ToolContext {
 
 export interface InterruptibleToolContext<S = unknown, R = unknown> {
 	loadSkill?: ToolExecutionContext['loadSkill'];
+	activeSkillIds?: ToolExecutionContext['activeSkillIds'];
 	/**
 	 * Suspend execution and send a payload to the consumer.
 	 * Must be used with `return await` — the branded return type signals

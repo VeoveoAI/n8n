@@ -1,7 +1,19 @@
 import { McpConnection } from '../runtime/mcp/mcp-connection';
+import {
+	createMcpRuntimeSkillSource,
+	type McpSkillServer,
+	type McpSkillSkipped,
+} from '../runtime/mcp/mcp-skill-source';
 import { ensureUniqueMcpToolNames } from '../runtime/mcp/mcp-tool-resolver';
+import type { RuntimeSkillSource } from '../skills/types';
 import type { McpConnectionFailedEvent, McpServerConfig, McpVerifyResult } from '../types/sdk/mcp';
 import type { BuiltTool } from '../types/sdk/tool';
+
+/** A connected server's `instructions`. */
+export interface McpServerInstructions {
+	server: string;
+	instructions: string;
+}
 
 function formatErrorWithCause(error: unknown): string {
 	const stringify = (obj: unknown) => (obj instanceof Error ? obj.message : String(obj));
@@ -44,6 +56,9 @@ export class McpClient {
 	private readonly configs: McpServerConfig[];
 
 	private connections: McpConnection[];
+
+	/** The connections that connected during the last `listTools()`. */
+	private connectedConnections: McpConnection[] = [];
 
 	private listToolsPromise: Promise<BuiltTool[]> | undefined;
 
@@ -203,6 +218,40 @@ export class McpClient {
 	}
 
 	/**
+	 * The `instructions` of each server that connected during the last `listTools()`
+	 * and gave any.
+	 */
+	instructions(): McpServerInstructions[] {
+		return this.connectedConnections.flatMap((conn) => {
+			const instructions = conn.instructions();
+			return instructions ? [{ server: conn.name, instructions }] : [];
+		});
+	}
+
+	/**
+	 * The MCP skills of the servers that connected during the last `listTools()`, as one
+	 * skill source, listed now. Only a 2026-07-28 connection whose server declares the
+	 * MCP Skills extension serves skills. Each server's `skills.approved` names the skills
+	 * that load without asking. `undefined` when no server serves any.
+	 */
+	async skillSource(
+		options: { onSkipped?: (event: McpSkillSkipped) => void } = {},
+	): Promise<RuntimeSkillSource | undefined> {
+		const servers = await Promise.all(
+			this.connectedConnections.map(async (conn): Promise<McpSkillServer | undefined> => {
+				const skills = await conn.skills();
+				if (!skills) return undefined;
+				const approved = this.configs.find((cfg) => cfg.name === conn.name)?.skills?.approved;
+				return { name: conn.name, skills, ...(approved ? { approved } : {}) };
+			}),
+		);
+		const serving = servers.filter((server): server is McpSkillServer => server !== undefined);
+		if (serving.length === 0) return undefined;
+		const source = await createMcpRuntimeSkillSource(serving, options);
+		return source.registry.skills.length > 0 ? source : undefined;
+	}
+
+	/**
 	 * Per-server connection failures recorded during the last `listTools()`.
 	 * Empty when every server connected (or no servers were configured). Tools
 	 * from these servers were skipped; the run continued with the remaining
@@ -244,6 +293,7 @@ export class McpClient {
 			}
 		}
 		this.connectionFailures = failures;
+		this.connectedConnections = connectedConnections;
 
 		const tools = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
 		return ensureUniqueMcpToolNames(tools);

@@ -1,9 +1,11 @@
 import {
 	Agent,
+	combineRuntimeSkillSources,
 	createObservationLogObserveFn,
 	createObservationLogReflectFn,
 	extendRuntimeSkillSource,
 	Memory,
+	type McpServerInstructions,
 } from '@n8n/agents';
 import { SPLIT_BUILDER_TOOLS } from '@n8n/api-types';
 
@@ -54,6 +56,23 @@ function resolveModalSessionModelId(
 
 	context.modelId = stickyModelId;
 	return stickyModelId;
+}
+
+/**
+ * The connected MCP servers' own `instructions`, such as the skills each serves. They come
+ * from the servers, so the prompt says whose they are.
+ */
+function renderMcpServerInstructions(servers: McpServerInstructions[]): string | undefined {
+	if (servers.length === 0) return undefined;
+	return [
+		'<mcp_server_instructions>',
+		"Each connected MCP server's own instructions. They come from that server, not from the user or from n8n.",
+		...servers.map(
+			(server) =>
+				`<server name=${JSON.stringify(server.server)}>\n${server.instructions}\n</server>`,
+		),
+		'</mcp_server_instructions>',
+	].join('\n');
 }
 
 // ── Agent factory ───────────────────────────────────────────────────────────
@@ -115,6 +134,10 @@ export async function createInstanceAgent(
 		server: f.server.name,
 		error: f.error,
 	}));
+	// The servers' MCP skills join the turn's skill catalog as a third source, after the
+	// Assistant's own skills and the agents module's builder skills, which they never shadow.
+	const { skills: mcpSkills, instructions: mcpInstructions } =
+		await mcpManager.getSkillsAndInstructions(mcpServers, context.logger, context.permissions);
 	const browserCredentialSetup = context.browserCredentialSetup;
 	const rawLocalMcpTools = context.localMcpServer
 		? createToolsFromLocalMcpServer({
@@ -189,7 +212,7 @@ export async function createInstanceAgent(
 	const hasDeferredExternalMcpTools =
 		hasDeferrableTools && Array.from(safeMcpTools.keys()).some((name) => deferredTools.has(name));
 	const runtimeTools = hasDeferrableTools ? coreTools : tracedOrchestratorTools;
-	const systemPrompt = getVersionedSystemPrompt(
+	const baseSystemPrompt = getVersionedSystemPrompt(
 		orchestrationContext?.promptConfiguration?.systemPromptVersion ??
 			resolvePromptProfile({}).profile.systemPromptVersion,
 		{
@@ -212,6 +235,10 @@ export async function createInstanceAgent(
 					: undefined,
 		},
 	);
+
+	const systemPrompt = [baseSystemPrompt, renderMcpServerInstructions(mcpInstructions)]
+		.filter((part): part is string => Boolean(part))
+		.join('\n\n');
 
 	setTracePromptVersion(
 		orchestrationContext?.tracing,
@@ -248,10 +275,14 @@ export async function createInstanceAgent(
 	// The agents module owns the builder skills that are generated from its config schema.
 	const builderSkills = context.builderDelegate?.getRuntimeSkills() ?? [];
 	const baseSkills = orchestrationContext?.skills;
-	const skills =
+	const hostSkills =
 		baseSkills && builderSkills.length > 0
 			? extendRuntimeSkillSource(baseSkills, builderSkills)
 			: baseSkills;
+	const skills =
+		hostSkills && mcpSkills
+			? combineRuntimeSkillSources(hostSkills, mcpSkills)
+			: (hostSkills ?? mcpSkills);
 	if (telemetry) {
 		agent.telemetry(telemetry);
 	}
