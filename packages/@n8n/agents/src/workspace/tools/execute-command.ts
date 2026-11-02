@@ -4,8 +4,10 @@ import { Tool } from '../../sdk/tool';
 import type { BuiltTool } from '../../types/sdk/tool';
 import type { WorkspaceSandbox } from '../types';
 
+export const WORKSPACE_EXECUTE_COMMAND_TOOL_NAME = 'workspace_execute_command';
+
 export function createExecuteCommandTool(sandbox: WorkspaceSandbox): BuiltTool {
-	return new Tool('workspace_execute_command')
+	return new Tool(WORKSPACE_EXECUTE_COMMAND_TOOL_NAME)
 		.description('Execute a shell command in the sandbox')
 		.input(
 			z.object({

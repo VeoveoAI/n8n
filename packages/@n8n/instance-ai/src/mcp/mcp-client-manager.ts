@@ -4,6 +4,8 @@ import {
 	McpClient,
 	type BuiltTool,
 	type McpServerConfig as NativeMcpServerConfig,
+	type McpServerInstructions,
+	type RuntimeSkillSource,
 } from '@n8n/agents';
 import { compileMcpToolPermissions } from '@n8n/ai-utilities/agent-config';
 import {
@@ -86,6 +88,7 @@ function buildNativeMcpConfigs(
 		const baseConfig: NativeMcpServerConfig = {
 			name: server.name,
 			configureTools: (tools) => compileMcpToolPermissions(toolPermissions, tools),
+			...(server.skills ? { skills: server.skills } : {}),
 		};
 		if (onToolCallSettled) {
 			baseConfig.onToolCallSettled = ({ toolName, success }) =>
@@ -218,6 +221,31 @@ export class McpClientManager {
 				);
 			},
 		);
+	}
+
+	/**
+	 * The MCP skills and `instructions` of the servers that `getRegularTools` connected for
+	 * the same configs and permissions. The skills are listed again on each call, so each
+	 * turn sees the servers' current catalogs. Call `getRegularTools` first.
+	 */
+	async getSkillsAndInstructions(
+		configs: McpServerConfig[],
+		logger: Logger,
+		{
+			mcpRead,
+			mcpWrite,
+		}: Pick<InstanceAiPermissions, 'mcpRead' | 'mcpWrite'> = DEFAULT_INSTANCE_AI_PERMISSIONS,
+	): Promise<{ skills?: RuntimeSkillSource; instructions: McpServerInstructions[] }> {
+		const safeConfigs = getSafeMcpServers(configs, logger, 'external MCP');
+		if (safeConfigs.length === 0) return { instructions: [] };
+		const client = this.clientsByKey.get(
+			mcpConfigCacheKey(safeConfigs, { categories: { read: mcpRead, write: mcpWrite } }),
+		);
+		if (!client) return { instructions: [] };
+		const skills = await client.skillSource({
+			onSkipped: (event) => logger.warn('Skipped MCP skill', { ...event }),
+		});
+		return { ...(skills ? { skills } : {}), instructions: client.instructions() };
 	}
 
 	async disconnect(): Promise<void> {

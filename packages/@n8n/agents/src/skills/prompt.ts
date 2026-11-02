@@ -25,6 +25,13 @@ export function renderSkillCatalogPrompt(
 							`  id: ${promptString(skill.id)}`,
 						]),
 				...(skill.category ? [`  category: ${promptString(skill.category)}`] : []),
+				...(skill.origin?.type === 'mcp'
+					? [
+							`  origin: ${promptString(
+								`MCP server ${skill.origin.server}${skill.origin.approved ? '' : ', loading it asks the user'}`,
+							)}`,
+						]
+					: []),
 				...(skill.recommendedTools?.length
 					? [`  recommendedTools: ${promptStringArray(skill.recommendedTools)}`]
 					: []),

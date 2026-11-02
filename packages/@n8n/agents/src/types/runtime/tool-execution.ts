@@ -141,6 +141,7 @@ export interface ProcessToolCallParams extends ToolCallIdentity {
 
 export interface ToolCallExecutorDeps {
 	loadSkill?: RuntimeSkillLoader;
+	activeSkillIds?: () => readonly string[];
 	telemetry: RuntimeTelemetry;
 	eventBus: AgentEventBus;
 	/** Effective tool-call concurrency (default 1 = sequential). */

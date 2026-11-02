@@ -88,8 +88,25 @@ export interface RuntimeSkillReferenceContract {
 	sharedReferences?: string[];
 }
 
+/**
+ * Where a skill that an MCP server serves comes from (the MCP Skills extension). Its text is
+ * the server's, not the host's: hosts frame it as untrusted and ask before a skill that is
+ * not `approved` loads. `fingerprint` covers the skill's file set.
+ */
+export interface RuntimeSkillMcpOrigin {
+	type: 'mcp';
+	/** The configured name of the server. */
+	server: string;
+	/** The skill's `SKILL.md` URI. */
+	uri: string;
+	/** The server's configuration pre-approves the skill. */
+	approved: boolean;
+	fingerprint: string;
+}
+
 export interface RuntimeSkill extends RuntimeSkillIndexEntry, RuntimeSkillReferenceContract {
 	id: string;
+	origin?: RuntimeSkillMcpOrigin;
 	instructions: string;
 	sourceName?: string;
 	path?: string;
@@ -113,6 +130,7 @@ export interface RuntimeSkillRegistryEntry
 	extends RuntimeSkillIndexEntry,
 		RuntimeSkillReferenceContract {
 	id: string;
+	origin?: RuntimeSkillMcpOrigin;
 	hash: string;
 	sourceName?: string;
 	path?: string;
@@ -140,6 +158,7 @@ export interface RuntimeSkillRegistry {
 
 export interface RuntimeSkillContent extends RuntimeSkillIndexEntry, RuntimeSkillReferenceContract {
 	id: string;
+	origin?: RuntimeSkillMcpOrigin;
 	instructions: string;
 	sourceName?: string;
 	path?: string;

@@ -27,6 +27,8 @@ const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(
 vi.mock('@n8n/agents', async (importOriginal) => ({
 	extendRuntimeSkillSource: (await importOriginal<typeof import('@n8n/agents')>())
 		.extendRuntimeSkillSource,
+	combineRuntimeSkillSources: (await importOriginal<typeof import('@n8n/agents')>())
+		.combineRuntimeSkillSources,
 	Agent: vi.fn().mockImplementation(function Agent(this: (typeof mockAgentInstances)[number]) {
 		this.model = vi.fn().mockReturnThis();
 		this.instructions = vi.fn().mockReturnThis();
@@ -170,6 +172,7 @@ function createMcpManagerStub(
 ) {
 	return {
 		getRegularTools: vi.fn().mockResolvedValue({ tools: regularTools, connectionFailures }),
+		getSkillsAndInstructions: vi.fn().mockResolvedValue({ instructions: [] }),
 		disconnect: vi.fn().mockResolvedValue(undefined),
 	};
 }
@@ -552,6 +555,59 @@ describe('createInstanceAgent', () => {
 		await expect(attached.loadSkill('builder_skill')).resolves.toMatchObject({
 			instructions: 'Builder body.',
 		});
+	});
+
+	it("joins the MCP servers' skills as a third source and shows the servers' instructions", async () => {
+		const { createRuntimeSkillSource, createMcpRuntimeSkillSource } =
+			await vi.importActual<typeof import('@n8n/agents')>('@n8n/agents');
+		const baseSkills = createRuntimeSkillSource([
+			{ id: 'base_skill', name: 'watch', description: 'Base.', instructions: 'Base body.' },
+		]);
+		const entry = (path: string) => ({
+			uri: `skill://${path}/SKILL.md`,
+			frontmatter: { name: path.split('/')[1], description: `${path} guidance` },
+			resources: [{ uri: `skill://${path}/SKILL.md`, digest: `sha256:${'0'.repeat(64)}`, size: 1 }],
+		});
+		// Synthetic entries: the agent only assembles the catalog here, it loads nothing.
+		const mcpSkills = await createMcpRuntimeSkillSource([
+			{
+				name: 'veoveo',
+				skills: {
+					list: async () => await Promise.resolve([entry('console/logs'), entry('console/watch')]),
+					get: async () => await Promise.reject(new Error('unused')),
+					read: async () => await Promise.reject(new Error('unused')),
+				},
+			},
+		]);
+		const mcpManager = createMcpManagerStub();
+		mcpManager.getSkillsAndInstructions.mockResolvedValue({
+			skills: mcpSkills,
+			instructions: [{ server: 'veoveo', instructions: 'Its skills say how.' }],
+		});
+
+		await createInstanceAgent({
+			modelId: 'test-model',
+			context: {
+				runLabel: 'mcp-skills-test',
+				browserUseState: undefined,
+				licenseHints: undefined,
+				localMcpServer: undefined,
+			},
+			orchestrationContext: { runId: 'mcp-skills-test', skills: baseSkills },
+			memoryConfig: {},
+			mcpManager,
+		} as never);
+
+		const attached = mockAgentInstances[0]?.skills.mock.calls[0]?.[0] as typeof baseSkills;
+		// The MCP skill named like a host skill is left out; the other joins with its origin.
+		expect(attached.registry.skills.map((skill) => [skill.name, skill.origin?.server])).toEqual([
+			['logs', 'veoveo'],
+			['watch', undefined],
+		]);
+		const systemPrompt = mockAgentInstances[0]?.instructions.mock.calls[0]?.[0] as string;
+		expect(systemPrompt).toContain(
+			'<mcp_server_instructions>\nEach connected MCP server\'s own instructions. They come from that server, not from the user or from n8n.\n<server name="veoveo">\nIts skills say how.\n</server>\n</mcp_server_instructions>',
+		);
 	});
 
 	it('exposes browser_connect and browser_navigate from localMcpServer in the agent toolset', async () => {

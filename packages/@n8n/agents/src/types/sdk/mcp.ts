@@ -52,6 +52,14 @@ export interface McpServerConfig {
 	/** Optional auth headers for URL-based transports. */
 	headers?: Record<string, string>;
 
+	/**
+	 * The MCP skills (the MCP Skills extension) of this server that load without asking.
+	 * Each entry is a skill's `SKILL.md` URI, or a URI prefix that ends in `/`, such as
+	 * `skill://veoveo/`. Any other skill of the server needs approval before its first
+	 * load and again when its files change.
+	 */
+	skills?: { approved?: string[] };
+
 	/** Optional callback that's invoked after an MCP tool call settles. */
 	onToolCallSettled?: (event: McpToolCallSettledEvent) => void | Promise<void>;
 

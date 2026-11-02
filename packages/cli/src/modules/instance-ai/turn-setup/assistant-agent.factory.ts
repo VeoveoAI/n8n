@@ -248,10 +248,29 @@ export class AssistantAgentFactory {
 	private parseMcpServers(raw: string): McpServerConfig[] {
 		if (!raw.trim()) return [];
 
+		const approved = this.parseMcpApprovedSkills(this.instanceAiConfig.mcpApprovedSkills);
 		return raw.split(',').map((entry) => {
 			const [name, url] = entry.trim().split('=');
-			return { name: name.trim(), url: url?.trim() };
+			const skills = approved.get(name.trim());
+			return {
+				name: name.trim(),
+				url: url?.trim(),
+				...(skills ? { skills: { approved: skills } } : {}),
+			};
 		});
+	}
+
+	/** `name=uri` pairs, each URI a pre-approved MCP skill or prefix of the server `name`. */
+	private parseMcpApprovedSkills(raw: string): Map<string, string[]> {
+		const approved = new Map<string, string[]>();
+		for (const entry of raw.split(',')) {
+			const separator = entry.indexOf('=');
+			if (separator < 0) continue;
+			const name = entry.slice(0, separator).trim();
+			const uri = entry.slice(separator + 1).trim();
+			if (name && uri) approved.set(name, [...(approved.get(name) ?? []), uri]);
+		}
+		return approved;
 	}
 
 	private createAgentMemoryOptions(

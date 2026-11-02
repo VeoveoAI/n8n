@@ -83,6 +83,65 @@ This fork carries Veoveo changes on the `veoveo` branch over an upstream n8n rel
   connection after the probe. In a person's Computer, the Assistant lists and calls the
   person's Hub tools.
 
+### MCP Skills in `@n8n/agents` and the Assistant
+
+- `packages/@n8n/agents/src/runtime/mcp/mcp-connection.ts`: on a 2026-07-28 connection
+  whose server declares the MCP Skills extension (`io.modelcontextprotocol/skills`,
+  SEP-2640), `McpConnection.skills()` serves the server's skills through the SDK's
+  `SkillsClient` (`@modelcontextprotocol/client` 2.4.0), which verifies each file it
+  reads against the skill's entry: listed, its size and digest, and `SKILL.md`'s
+  frontmatter. A 2025 connection serves none. `instructions()` reads the server's
+  `instructions`.
+- `runtime/mcp/mcp-skill-source.ts`: `createMcpRuntimeSkillSource` makes the servers'
+  skills one `RuntimeSkillSource`, read lazily: nothing is fetched until a skill loads.
+  - Each skill's id is `mcp:{server}:{SKILL.md URI}#{file set}`, the file set being the
+    first 12 hex digits of a SHA-256 over every file's URI, digest and size. An active
+    skill so names its server and URI, and a skill whose files changed is another
+    skill.
+  - Each entry carries `origin` (`{type: 'mcp', server, uri, approved, fingerprint}`)
+    and the configured server name as `sourceName`, and its manifest as linked files.
+  - It refuses `"dynamic"` skills and skills over 512 files or 16 MiB, and takes no
+    `allowed-tools`, dependencies, policy or interface from MCP frontmatter.
+- `McpServerConfig.skills.approved`: skill URIs, or URI prefixes ending in `/`, that load
+  without asking. `McpClient.skillSource()` and `instructions()` serve the connected
+  servers' skills and instructions.
+- Approval: `load_skill` (`skills/tools.ts`) asks before it loads a skill that is not
+  pre-approved, or reads one of its files, through the agents' approval gate. A session
+  approval binds to the skill's id, so it ends when the file set changes, and an active
+  skill whose id is no longer listed drops out. `ApprovalConfig` gains `grantKey` (the
+  grant a session approval records; `null` offers none) and passes the tool context to
+  `needsApprovalFn`.
+- The gate: while a skill that is not pre-approved is active, `workspace_execute_command`
+  asks before each call, with no session approval (`gateCommandsForMcpSkills`, applied in
+  `Agent.build`). The tool context's `activeSkillIds()` reports the run's active skills.
+- Framing: an MCP skill's body reaches the model inside `<mcp_skill server uri>`, which
+  says it comes from that server and is not part of the instructions, with a
+  `[Skill origin: …]` line; the catalog lists its origin. MCP skills stay out of the
+  trusted `<active_skills>` block: a skill that falls back to the system prompt goes to
+  `<active_mcp_skills>`.
+- `combineRuntimeSkillSources` (`skills/registry.ts`) adds a lazy source to a source; the
+  base wins on an id or name, so MCP skills never shadow the Assistant's own.
+- The Assistant (`packages/@n8n/instance-ai`): `McpClientManager.getSkillsAndInstructions`
+  lists the connected servers' skills on each turn, and `createInstanceAgent` adds them
+  as a third source after the bundled skills and the builder's skills, and puts the
+  servers' instructions in the system prompt under `<mcp_server_instructions>`.
+- `N8N_INSTANCE_AI_MCP_APPROVED_SKILLS` (`@n8n/config`): comma-separated `name=uri`
+  pairs naming each server's pre-approved skills; `assistant-agent.factory.ts` adds them
+  to the servers of `N8N_INSTANCE_AI_MCP_SERVERS`. In a person's Computer
+  `veoveo-n8n-computer` sets the `veoveo` server's five prefixes: `skill://veoveo/`,
+  `skill://console/`, `skill://artifact/`, `skill://media/`, `skill://embedding/`.
+- `@modelcontextprotocol/server` 2.4.0 (catalog) serves the test fixtures.
+- Why: Veoveo servers serve their guidance as MCP skills through the Hub, and the
+  Assistant had no MCP skill support; a skill that the installation did not approve
+  must not run code in the person's name unseen.
+- Check: `@n8n/agents` `src/runtime/__tests__/mcp-skills.test.ts` (source, limits,
+  approval binding, framing, the gate) and the integration test
+  `src/__tests__/integration/mcp-skills.test.ts` against a 2.4.0 `SkillsExtension`
+  server (verified reads, a digest mismatch refused, no skills on 2025, instructions);
+  `@n8n/instance-ai` `instance-agent.test.ts`, "joins the MCP servers' skills as a third
+  source". In a person's Computer, the Assistant lists the Hub's skills with their origin
+  and loads one on demand.
+
 ### The environment alone sets Instance AI's environment-managed settings
 
 - `packages/cli/src/modules/instance-ai/instance-ai-settings.service.ts`: the admin

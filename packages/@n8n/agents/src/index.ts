@@ -216,6 +216,7 @@ export type {
 export type { AgentSnapshot } from './sdk/agent';
 export {
 	appendSkillCatalogToInstructions,
+	combineRuntimeSkillSources,
 	createRuntimeSkillRegistry,
 	createRuntimeSkillSource,
 	createRuntimeSkillTools,
@@ -253,6 +254,7 @@ export type {
 	RuntimeSkillLinkedFiles,
 	RuntimeSkillLoader,
 	RuntimeSkillLoadError,
+	RuntimeSkillMcpOrigin,
 	RuntimeSkillMcpServerDependency,
 	RuntimeSkillPolicyContract,
 	RuntimeSkillReferenceContract,
@@ -272,6 +274,18 @@ export type {
 	CredentialListItem,
 } from './types';
 export { McpClient } from './sdk/mcp-client';
+export type { McpServerInstructions } from './sdk/mcp-client';
+export {
+	createMcpRuntimeSkillSource,
+	MCP_SKILL_LIMITS,
+	mcpSkillId,
+} from './runtime/mcp/mcp-skill-source';
+export type { McpSkillServer, McpSkillSkipped } from './runtime/mcp/mcp-skill-source';
+export type {
+	McpConnectionSkills,
+	McpSkillEntry,
+	McpSkillFile,
+} from './runtime/mcp/mcp-connection';
 export {
 	hasMcpMediaContent,
 	mcpContentToMessageParts,

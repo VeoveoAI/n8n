@@ -1906,6 +1906,8 @@ export interface TaskStorage {
 export interface McpServerConfig {
 	name: string;
 	url?: string;
+	/** The server's MCP skills that load without asking, by `SKILL.md` URI or a URI prefix that ends in `/`. */
+	skills?: { approved?: string[] };
 	transport?: 'sse' | 'streamableHttp';
 	command?: string;
 	args?: string[];

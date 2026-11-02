@@ -51,12 +51,15 @@ async function importMcpSdk() {
 			StreamableHTTPClientTransport,
 		},
 		{ StdioClientTransport },
+		{ SkillsClient },
 	] = await Promise.all([
 		import('@modelcontextprotocol/client'),
 		import('@modelcontextprotocol/client/stdio'),
+		import('@modelcontextprotocol/client/ext/skills'),
 	]);
 	return {
 		Client,
+		SkillsClient,
 		SSEClientTransport,
 		SdkHttpError,
 		StdioClientTransport,
@@ -66,6 +69,27 @@ async function importMcpSdk() {
 
 type McpSdkModule = Awaited<ReturnType<typeof importMcpSdk>>;
 type McpClient = InstanceType<McpSdkModule['Client']>;
+type McpSkillsClient = InstanceType<McpSdkModule['SkillsClient']>;
+
+/** A skill entry as `skills/list` and `skills/get` carry it (the MCP Skills extension). */
+export type McpSkillEntry = Awaited<ReturnType<McpSkillsClient['get']>>['skill'];
+
+/** A skill file as the SDK read and verified it against the skill's entry. */
+export type McpSkillFile = Awaited<ReturnType<McpSkillsClient['read']>>;
+
+/**
+ * A server's MCP Skills through the SDK's `SkillsClient`, which verifies every file it
+ * reads against the skill's entry: listed, its size and digest, and for `SKILL.md` the
+ * frontmatter.
+ */
+export interface McpConnectionSkills {
+	/** Every valid entry the server lists; an invalid one is left out. */
+	list(): Promise<McpSkillEntry[]>;
+	/** The skill whose `SKILL.md` is at `uri`, listed or not. */
+	get(uri: string): Promise<McpSkillEntry>;
+	/** One verified file of `skill`: `ref` relative to its root, by default its `SKILL.md`. */
+	read(skill: McpSkillEntry, ref?: string): Promise<McpSkillFile>;
+}
 type McpTransport =
 	| InstanceType<McpSdkModule['SSEClientTransport']>
 	| InstanceType<McpSdkModule['StreamableHTTPClientTransport']>
@@ -308,6 +332,28 @@ export class McpConnection {
 		} catch (error) {
 			console.error(`MCP tool call observer error for server "${this.config.name}":`, error);
 		}
+	}
+
+	/** The server's `instructions`, when it gave any. */
+	instructions(): string | undefined {
+		return this.client?.getInstructions()?.trim() || undefined;
+	}
+
+	/**
+	 * The server's MCP Skills, on a 2026-07-28 connection whose server declares the
+	 * extension; `undefined` otherwise. The 2025 protocol carries no skills.
+	 */
+	async skills(): Promise<McpConnectionSkills | undefined> {
+		const client = this.client;
+		if (!client || client.getProtocolEra() !== 'modern') return undefined;
+		const sdk = await loadMcpSdk();
+		const skillsClient = new sdk.SkillsClient(client, { skipInvalid: true });
+		if (!skillsClient.supported) return undefined;
+		return {
+			list: async () => (await skillsClient.list()).skills,
+			get: async (uri) => (await skillsClient.get(uri)).skill,
+			read: async (skill, ref) => await skillsClient.read(skill, ref),
+		};
 	}
 
 	async disconnect(): Promise<void> {

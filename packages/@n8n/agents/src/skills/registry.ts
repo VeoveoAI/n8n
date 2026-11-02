@@ -160,6 +160,60 @@ export function extendRuntimeSkillSource(
 	return extended;
 }
 
+/**
+ * Add a source whose skills load lazily, such as the skills of MCP servers, to a source.
+ * The base wins: an added skill that reuses the id or the name of a base skill is left out,
+ * so an added source never shadows a skill the host ships. Recomputes `skillsHash`.
+ */
+export function combineRuntimeSkillSources(
+	source: RuntimeSkillSource,
+	added: RuntimeSkillSource,
+): RuntimeSkillSource {
+	const baseIds = new Set(source.registry.skills.map((skill) => skill.id));
+	const baseNames = new Set(source.registry.skills.map((skill) => skill.name.toLowerCase()));
+	const kept = added.registry.skills.filter(
+		(skill) => !baseIds.has(skill.id) && !baseNames.has(skill.name.toLowerCase()),
+	);
+	if (kept.length === 0) return source;
+
+	const addedIds = new Set(kept.map((skill) => skill.id));
+	const mergeRegistry = (base: RuntimeSkillRegistry): RuntimeSkillRegistry => {
+		const entries = [...base.skills, ...kept].sort(compareRegistryEntries);
+		return { ...base, skillsHash: hashRuntimeSkillRegistry(entries), skills: entries };
+	};
+	const { prepare } = source;
+	const combined: RuntimeSkillSource = {
+		...source,
+		registry: mergeRegistry(source.registry),
+		loadSkill: async (skillId, anchor) =>
+			addedIds.has(skillId)
+				? await added.loadSkill(skillId, anchor)
+				: await source.loadSkill(skillId, anchor),
+		loadFile: async (skillId, filePath) =>
+			addedIds.has(skillId)
+				? ((await added.loadFile?.(skillId, filePath)) ?? null)
+				: ((await source.loadFile?.(skillId, filePath)) ?? null),
+		getLoadError: (skillId) =>
+			addedIds.has(skillId) ? added.getLoadError?.(skillId) : source.getLoadError?.(skillId),
+	};
+	if (prepare) {
+		combined.prepare = async () => {
+			await prepare();
+			combined.registry = mergeRegistry(source.registry);
+		};
+	}
+	return combined;
+}
+
+/** `files` grouped as a skill's linked files: by their first path segment, in path order. */
+export function groupRuntimeSkillLinkedFiles(
+	files: RuntimeSkillLinkedFile[],
+): RuntimeSkillLinkedFiles {
+	const linkedFiles = emptyLinkedFiles();
+	for (const file of files) linkedFiles[groupFor(file.path)].push(file);
+	return normalizeLinkedFiles(linkedFiles);
+}
+
 export function loadRuntimeSkillSourceFromDirectory(
 	rootDir: string,
 	options: LoadRuntimeSkillSourceFromDirectoryOptions = {},

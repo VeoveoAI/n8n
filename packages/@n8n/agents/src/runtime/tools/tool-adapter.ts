@@ -165,6 +165,7 @@ function createToolContext(
 		toolName: builtTool.name,
 		runId: executionContext.runId,
 		...(loadSkill ? { loadSkill } : {}),
+		...(executionContext.activeSkillIds ? { activeSkillIds: executionContext.activeSkillIds } : {}),
 		persistence: executionContext.persistence,
 		emitEvent: executionContext.emitEvent,
 		abortSignal: executionContext.abortSignal,

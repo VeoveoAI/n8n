@@ -48,6 +48,15 @@ export class InstanceAiConfig {
 	@Env('N8N_INSTANCE_AI_MCP_SERVERS')
 	mcpServers: string = '';
 
+	/**
+	 * Comma-separated `name=uri` pairs for the MCP skills of the servers in `N8N_INSTANCE_AI_MCP_SERVERS` that the Assistant loads without asking.
+	 * Give a skill's `SKILL.md` URI, or a URI prefix that ends in `/` (e.g. "acme=skill://acme/,acme=skill://tools/").
+	 * Repeat a server's name for each URI. The Assistant asks before it loads any other skill, and asks again when that skill's files change.
+	 * While such a skill is active, the Assistant asks before each command it runs in its sandbox.
+	 */
+	@Env('N8N_INSTANCE_AI_MCP_APPROVED_SKILLS')
+	mcpApprovedSkills: string = '';
+
 	/** Token threshold for Observer to trigger compression of message history. */
 	@Env('N8N_INSTANCE_AI_OBSERVER_MESSAGE_TOKENS')
 	observerMessageTokens: number = 30_000;

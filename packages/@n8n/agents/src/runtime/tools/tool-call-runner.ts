@@ -397,6 +397,7 @@ export class ToolCallRunner {
 							runId,
 							persistence,
 							...(this.deps.loadSkill ? { loadSkill: this.deps.loadSkill } : {}),
+							...(this.deps.activeSkillIds ? { activeSkillIds: this.deps.activeSkillIds } : {}),
 							emitEvent: (event) => this.eventBus.emit(event),
 							abortSignal,
 							executionCounter,

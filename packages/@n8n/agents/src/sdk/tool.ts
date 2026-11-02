@@ -41,7 +41,12 @@ type OutputType<TOutput> = TOutput extends z.ZodType ? z.infer<TOutput> : unknow
 
 export interface ApprovalConfig {
 	requireApproval?: boolean;
-	needsApprovalFn?: (args: unknown) => Promise<boolean> | boolean;
+	needsApprovalFn?: (args: unknown, ctx: ToolContext) => Promise<boolean> | boolean;
+	/**
+	 * The grant that a session approval records and that later calls check. Default: the
+	 * tool's name. `null` offers no session approval, so each call that needs approval asks.
+	 */
+	grantKey?: (args: unknown) => string | null;
 }
 
 function emitToolExecutionStart(
@@ -121,10 +126,12 @@ export function wrapToolForApproval(tool: BuiltTool, config: ApprovalConfig): Bu
 			if (resumingInnerTool) {
 				return await originalHandler(input, interruptCtx);
 			}
-			const grantKey = JSON.stringify(['tool', currentTool.name]);
-			const approvalContext = interruptCtx.approvalContext;
+			const grantKey = config.grantKey
+				? config.grantKey(input)
+				: JSON.stringify(['tool', currentTool.name]);
+			const approvalContext = grantKey === null ? undefined : interruptCtx.approvalContext;
 			if (interruptCtx.resumeData === undefined) {
-				if (approvalContext?.approvedKeys.has(grantKey)) {
+				if (grantKey !== null && approvalContext?.approvedKeys.has(grantKey)) {
 					if (config.requireApproval || hasConditionalApproval) {
 						emitToolExecutionStart(currentTool, input, interruptCtx);
 					}
@@ -132,7 +139,7 @@ export function wrapToolForApproval(tool: BuiltTool, config: ApprovalConfig): Bu
 				}
 				let needs = config.requireApproval ?? false;
 				if (!needs && config.needsApprovalFn) {
-					needs = await config.needsApprovalFn(input);
+					needs = await config.needsApprovalFn(input, interruptCtx);
 				}
 				if (needs) {
 					const displayName = getToolApprovalDisplayName(currentTool);
@@ -162,7 +169,7 @@ export function wrapToolForApproval(tool: BuiltTool, config: ApprovalConfig): Bu
 			if (decision.scope === 'session' && !approvalContext) {
 				throw new Error('Session approvals are not available for this tool.');
 			}
-			await approvalContext?.onDecision(grantKey, decision);
+			if (grantKey !== null) await approvalContext?.onDecision(grantKey, decision);
 			interruptCtx.abortSignal?.throwIfAborted();
 			if (!decision.approved) {
 				return { declined: true, message: `Tool "${currentTool.name}" was not approved` };

@@ -179,3 +179,42 @@ describe('AssistantAgentFactory — model transport', () => {
 		expect(createInstanceAgent).toHaveBeenCalledWith(expect.objectContaining({ modelFetch }));
 	});
 });
+
+describe('AssistantAgentFactory — MCP servers from the environment', () => {
+	type ParseInternals = {
+		parseMcpServers: (raw: string) => Array<{
+			name: string;
+			url?: string;
+			skills?: { approved?: string[] };
+		}>;
+		instanceAiConfig: Pick<InstanceAiConfig, 'mcpApprovedSkills'>;
+	};
+
+	function parse(servers: string, approved: string) {
+		const service = Object.create(AssistantAgentFactory.prototype) as unknown as ParseInternals;
+		service.instanceAiConfig = { mcpApprovedSkills: approved };
+		return service.parseMcpServers(servers);
+	}
+
+	it('gives each server the MCP skills that N8N_INSTANCE_AI_MCP_APPROVED_SKILLS pre-approves', () => {
+		expect(
+			parse(
+				'veoveo=http://127.0.0.1:5680/n8n/mcp/token,other=https://mcp.example.com/mcp',
+				'veoveo=skill://veoveo/, veoveo=skill://console/,unknown=skill://x/,malformed',
+			),
+		).toEqual([
+			{
+				name: 'veoveo',
+				url: 'http://127.0.0.1:5680/n8n/mcp/token',
+				skills: { approved: ['skill://veoveo/', 'skill://console/'] },
+			},
+			{ name: 'other', url: 'https://mcp.example.com/mcp' },
+		]);
+	});
+
+	it('pre-approves no skill when the variable is empty', () => {
+		expect(parse('veoveo=http://127.0.0.1:5680/n8n/mcp/token', '')).toEqual([
+			{ name: 'veoveo', url: 'http://127.0.0.1:5680/n8n/mcp/token' },
+		]);
+	});
+});
