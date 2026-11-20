@@ -3,7 +3,7 @@
 This fork carries Veoveo changes on the `veoveo` branch over an upstream n8n release
 (`upstream` = `https://github.com/n8n-io/n8n`).
 
-- Current upstream base: release `n8n@2.46.0` (`17d3934e42`).
+- Current upstream base: release `n8n@2.48.7` (`86dff76e10`).
 - Each change is the smallest one that closes a verified gap. Changes stay in this fork;
   they are not offered upstream.
 - Update this file whenever a fork change is added, changed or retired.
@@ -170,6 +170,42 @@ This fork carries Veoveo changes on the `veoveo` branch over an upstream n8n rel
   persisted row does not override the environment, a save from such a row writes none of
   them, and the other fields still persist and apply; in a person's Computer, the
   Assistant lists the person's Hub tools after a restart.
+
+## Retired
+
+- **One `@opentelemetry/sdk-trace-base` for the production tree** (`8e870075d5` on
+  2.46.0): an override pinned it to 2.11.0, so that `@langchain/core` 1.2.8 and
+  `langsmith` 0.6.0 had one peer variant each and `pnpm deploy` accepted the production
+  tree. Upstream #42379 (`7fc98d3f6d`, in 2.48) takes it from the catalog at 2.10.0,
+  for the Daytona SDK as well, and with `@modelcontextprotocol/server` 2.4.0 the
+  lockfile keeps one variant of each.
+
+## Updates
+
+- **2026-11-19, 2.46.0 to 2.48.5** (branch `veoveo-sync-2.48.5`; `veoveo/…` cannot be
+  created beside `veoveo`). Each change replayed as one commit:
+  - The schema check and the environment-managed settings applied unchanged.
+  - Sandbox homes: upstream's portable workspace root (#42882) makes
+    `/home/user/workspace` Instance AI's prompt root for every provider; Daytona keeps it,
+    and the n8n sandbox service takes the sandbox's own home while
+    `N8N_SANDBOX_SERVICE_HOMES` is set. A factory test checks it.
+  - MCP 2026-07-28: the two commits of 2.46.0 (2026-07-28 only, then first with the
+    fallback) as one. Upstream moved to `@modelcontextprotocol/sdk` 1.32.0, which still
+    negotiates at most 2025-11-25, and added the redirect-aware fetch with
+    `redirectPolicy: 'follow'` (#42559); both stay on the 2.x client.
+  - MCP skills: upstream keeps the skill availability notice out of the system prompt
+    (#42922); the servers' instructions still follow it. `mcpContentToMessageParts` is no
+    longer exported: upstream removed it (#42469).
+  - The lockfile is pnpm 12.4.2's `install --lockfile-only` at each change that moves a
+    dependency. Re-resolving `@n8n/agents` moved `@ai-sdk/provider-utils` to 5.0.70,
+    which upstream's `minimumReleaseAgeExclude` names, and its
+    `@opentelemetry/sdk-trace-node` to 2.10.0.
+
+- **2026-11-20, 2.48.5 to 2.48.7** (branch `veoveo-sync-2.48.7`). The five changes
+  applied unchanged, one commit each. The two patch releases change no dependency and
+  leave `pnpm-lock.yaml` as it was. Upstream's image moved to its own Node 26.13.0 build
+  with a V8 patch (#44351); the fork's Debian image stays on the official Node images and
+  takes Node 26.13.1, the 2026-11-11 security release that upstream does not pin yet.
 
 ## Configuration, Not Changes
 
